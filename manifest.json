@@ -1,0 +1,21 @@
+{
+  "name": "ShiftWise",
+  "short_name": "ShiftWise",
+  "start_url": "/shiftwise/",
+  "display": "standalone",
+  "background_color": "#0e0f11",
+  "theme_color": "#6ee7b7",
+  "description": "Shift management app for teams",
+  "icons": [
+    {
+      "src": "https://via.placeholder.com/192x192/6ee7b7/0e0f11?text=SW",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://via.placeholder.com/512x512/6ee7b7/0e0f11?text=SW",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
