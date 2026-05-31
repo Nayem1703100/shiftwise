@@ -66,8 +66,12 @@ input, textarea, select, button { font-family: var(--sans); }
   background: radial-gradient(ellipse 80% 60% at 50% 0%, #1a2e2a 0%, var(--bg) 70%);
 }
 .login-box { width: 100%; max-width: 400px; padding: 1.5rem; }
-.login-back { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--text3); cursor: pointer; margin-bottom: 2rem; width: fit-content; }
-.login-back:hover { color: var(--text2); }
+.login-back {
+  display: inline-flex; align-items: center; gap: 8px; font-size: 0.82rem; color: var(--text2);
+  cursor: pointer; margin-bottom: 2rem; padding: 8px 14px; border-radius: var(--r);
+  background: var(--surface2); border: 1px solid var(--border); transition: all 0.15s;
+}
+.login-back:hover { border-color: var(--accent); color: var(--accent); }
 .login-title { font-size: 1.5rem; font-weight: 700; margin-bottom: 4px; }
 .login-sub { font-size: 0.8rem; color: var(--text3); margin-bottom: 2rem; }
 .field { margin-bottom: 1.1rem; }
@@ -100,7 +104,7 @@ input, textarea, select, button { font-family: var(--sans); }
 .btn-xs { padding: 5px 10px; font-size: 0.72rem; border-radius: 6px; }
 
 /* APP SHELL */
-#employee-app, #manager-app { flex-direction: row; }
+#employee-app, #manager-app { flex-direction: column; }
 .sidebar {
   width: 230px; min-height: 100vh; background: var(--surface);
   border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0;
@@ -406,11 +410,57 @@ tr:hover td { background: var(--surface2); }
 .flex-1 { flex: 1; }
 hr.section { border: none; border-top: 1px solid var(--border); margin: 1.5rem 0; }
 
+/* TOP BAR (mobile only) */
+.top-bar {
+  display: none; align-items: center; justify-content: space-between;
+  padding: 0 1rem; height: 52px; background: var(--surface);
+  border-bottom: 1px solid var(--border); flex-shrink: 0; gap: 8px;
+}
+.top-bar-title { font-family: var(--mono); font-size: 1rem; color: var(--accent); letter-spacing: -0.5px; }
+.top-bar-user { font-size: 0.75rem; color: var(--text3); flex: 1; text-align: center; }
+.hamburger {
+  width: 36px; height: 36px; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 5px; cursor: pointer; border-radius: var(--r); background: var(--surface2);
+  border: 1px solid var(--border);
+}
+.hamburger span { display: block; width: 18px; height: 2px; background: var(--text2); border-radius: 2px; transition: all 0.2s; }
+.top-bar-logout {
+  padding: 7px 12px; border-radius: var(--r); background: transparent;
+  border: 1px solid var(--border); color: var(--text3); cursor: pointer; font-size: 0.75rem;
+}
+.top-bar-logout:hover { border-color: var(--danger); color: var(--danger); }
+
+/* DRAWER OVERLAY */
+.drawer-overlay {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+  z-index: 55; backdrop-filter: blur(2px);
+}
+.drawer-overlay.open { display: block; }
+
+/* MOBILE LAYOUT */
+#employee-app, #manager-app { flex-direction: column; }
+.app-body { display: flex; flex-direction: row; flex: 1; overflow: hidden; }
+
 /* RESPONSIVE */
-@media(max-width: 640px) {
-  .sidebar { display: none; }
-  .timer-display { font-size: 3.5rem; }
+@media(min-width: 769px) {
+  .app-body { height: calc(100vh); }
+  .main { overflow-y: auto; }
+}
+@media(max-width: 768px) {
+  #employee-app, #manager-app { min-height: 100vh; }
+  .top-bar { display: flex; }
+  .sidebar {
+    position: fixed; left: -240px; top: 0; height: 100vh; z-index: 60;
+    width: 240px; transition: left 0.25s ease; box-shadow: none;
+  }
+  .sidebar.open { left: 0; box-shadow: 4px 0 24px rgba(0,0,0,0.5); }
+  .main { overflow-y: auto; flex: 1; }
+  .timer-display { font-size: 3rem; letter-spacing: -2px; }
   .stats-grid { grid-template-columns: 1fr 1fr; }
+  .dash-panels { grid-template-columns: 1fr; }
+  .page { padding: 1.2rem; }
+  .emp-grid { grid-template-columns: 1fr; }
+  .sched-grid-wrap { font-size: 0.75rem; }
 }
 </style>
 </head>
@@ -485,7 +535,18 @@ hr.section { border: none; border-top: 1px solid var(--border); margin: 1.5rem 0
 
 <!-- ════════════════ EMPLOYEE APP ════════════════ -->
 <div id="employee-app" class="screen">
-  <div class="sidebar">
+  <!-- Mobile top bar -->
+  <div class="top-bar">
+    <div class="hamburger" onclick="toggleDrawer('employee-app')" title="Menu">
+      <span></span><span></span><span></span>
+    </div>
+    <div class="top-bar-user" id="emp-topbar-name">Employee</div>
+    <button class="top-bar-logout" onclick="logout()">Sign Out</button>
+  </div>
+  <!-- Drawer overlay (mobile) -->
+  <div id="emp-drawer-overlay" class="drawer-overlay" onclick="closeDrawer('employee-app')"></div>
+  <div class="app-body">
+  <div class="sidebar" id="emp-sidebar">
     <div class="sidebar-logo">ShiftWise</div>
     <div class="sidebar-user">
       <div class="sidebar-user-name" id="emp-sidebar-name">–</div>
@@ -493,23 +554,23 @@ hr.section { border: none; border-top: 1px solid var(--border); margin: 1.5rem 0
       <div class="sidebar-user-badge" id="emp-sidebar-code">–</div>
     </div>
     <nav>
-      <div class="nav-item active" id="nav-clock" onclick="showEmpPage('clock-page')">
+      <div class="nav-item active" id="nav-clock" onclick="showEmpPage('clock-page');closeDrawer('employee-app')">
         <span class="nav-icon">⏱</span> Clock In / Out
         <div class="clock-dot" id="nav-clock-dot"></div>
       </div>
-      <div class="nav-item" id="nav-history" onclick="showEmpPage('history-page')">
+      <div class="nav-item" id="nav-history" onclick="showEmpPage('history-page');closeDrawer('employee-app')">
         <span class="nav-icon">📋</span> Shift History
       </div>
-      <div class="nav-item" id="nav-schedule" onclick="showEmpPage('my-schedule-page')">
+      <div class="nav-item" id="nav-schedule" onclick="showEmpPage('my-schedule-page');closeDrawer('employee-app')">
         <span class="nav-icon">🗓</span> My Schedule
       </div>
-      <div class="nav-item" id="nav-avail" onclick="showEmpPage('availability-page')">
+      <div class="nav-item" id="nav-avail" onclick="showEmpPage('availability-page');closeDrawer('employee-app')">
         <span class="nav-icon">📅</span> My Availability
       </div>
     </nav>
     <div class="sidebar-spacer"></div>
     <div class="sidebar-logout">
-      <button class="btn btn-ghost btn-full btn-sm" onclick="logout()">Sign Out</button>
+      <button class="btn btn-ghost btn-full btn-sm" onclick="logout()">⎋ Sign Out</button>
     </div>
   </div>
   <div class="main">
@@ -623,37 +684,49 @@ hr.section { border: none; border-top: 1px solid var(--border); margin: 1.5rem 0
       <div id="my-schedule-list"></div>
     </div>
 
-  </div>
-</div>
+  </div><!-- /main -->
+  </div><!-- /app-body -->
+</div><!-- /employee-app -->
 
 <!-- ════════════════ MANAGER APP ════════════════ -->
 <div id="manager-app" class="screen">
-  <div class="sidebar">
+  <!-- Mobile top bar -->
+  <div class="top-bar">
+    <div class="hamburger" onclick="toggleDrawer('manager-app')" title="Menu">
+      <span></span><span></span><span></span>
+    </div>
+    <div class="top-bar-user" id="mgr-topbar-name">Management</div>
+    <button class="top-bar-logout" onclick="logout()">Sign Out</button>
+  </div>
+  <!-- Drawer overlay (mobile) -->
+  <div id="mgr-drawer-overlay" class="drawer-overlay" onclick="closeDrawer('manager-app')"></div>
+  <div class="app-body">
+  <div class="sidebar" id="mgr-sidebar">
     <div class="sidebar-logo">ShiftWise</div>
     <div class="sidebar-user">
       <div class="sidebar-user-name" id="mgr-sidebar-name">Manager</div>
       <div class="sidebar-user-role">Management</div>
     </div>
     <nav>
-      <div class="nav-item mgr-active" id="mnav-dash" onclick="showMgrPage('mgr-dashboard')">
+      <div class="nav-item mgr-active" id="mnav-dash" onclick="showMgrPage('mgr-dashboard');closeDrawer('manager-app')">
         <span class="nav-icon">📊</span> Dashboard
       </div>
-      <div class="nav-item" id="mnav-employees" onclick="showMgrPage('mgr-employees')">
+      <div class="nav-item" id="mnav-employees" onclick="showMgrPage('mgr-employees');closeDrawer('manager-app')">
         <span class="nav-icon">👥</span> Employees
       </div>
-      <div class="nav-item" id="mnav-departments" onclick="showMgrPage('mgr-departments')">
+      <div class="nav-item" id="mnav-departments" onclick="showMgrPage('mgr-departments');closeDrawer('manager-app')">
         <span class="nav-icon">🏷</span> Departments
       </div>
-      <div class="nav-item" id="mnav-schedules" onclick="showMgrPage('mgr-schedules')">
+      <div class="nav-item" id="mnav-schedules" onclick="showMgrPage('mgr-schedules');closeDrawer('manager-app')">
         <span class="nav-icon">🗓</span> Schedules
       </div>
-      <div class="nav-item" id="mnav-reports" onclick="showMgrPage('mgr-reports')">
+      <div class="nav-item" id="mnav-reports" onclick="showMgrPage('mgr-reports');closeDrawer('manager-app')">
         <span class="nav-icon">📈</span> Reports
       </div>
     </nav>
     <div class="sidebar-spacer"></div>
     <div class="sidebar-logout">
-      <button class="btn btn-ghost btn-full btn-sm" onclick="logout()">Sign Out</button>
+      <button class="btn btn-ghost btn-full btn-sm" onclick="logout()">⎋ Sign Out</button>
     </div>
   </div>
   <div class="main">
@@ -766,8 +839,9 @@ hr.section { border: none; border-top: 1px solid var(--border); margin: 1.5rem 0
       </div>
     </div>
 
-  </div>
-</div>
+  </div><!-- /main -->
+  </div><!-- /app-body -->
+</div><!-- /manager-app -->
 
 <!-- ════════════════ MODAL ════════════════ -->
 <div id="modal-overlay">
@@ -927,6 +1001,23 @@ function showMgrPage(pageId) {
 }
 
 // ══════════════════════════════════════
+//  DRAWER (mobile sidebar)
+// ══════════════════════════════════════
+function toggleDrawer(appId) {
+  const prefix = appId === 'employee-app' ? 'emp' : 'mgr';
+  const sidebar = document.getElementById(prefix + '-sidebar');
+  const overlay = document.getElementById(prefix + '-drawer-overlay');
+  const isOpen = sidebar.classList.contains('open');
+  if (isOpen) { sidebar.classList.remove('open'); overlay.classList.remove('open'); }
+  else { sidebar.classList.add('open'); overlay.classList.add('open'); }
+}
+function closeDrawer(appId) {
+  const prefix = appId === 'employee-app' ? 'emp' : 'mgr';
+  document.getElementById(prefix + '-sidebar').classList.remove('open');
+  document.getElementById(prefix + '-drawer-overlay').classList.remove('open');
+}
+
+// ══════════════════════════════════════
 //  AUTH
 // ══════════════════════════════════════
 function clearEmpError() { document.getElementById('emp-error').textContent = ''; }
@@ -950,6 +1041,7 @@ function empLogin() {
   session = { role:'employee', empId: emp.id, mgrId: null };
   document.getElementById('emp-sidebar-name').textContent = emp.name;
   document.getElementById('emp-sidebar-code').textContent = '#' + emp.code;
+  document.getElementById('emp-topbar-name').textContent = emp.name + ' · #' + emp.code;
   document.getElementById('emp-code-input').value = '';
   document.getElementById('emp-name-input').value = '';
   showScreen('employee-app');
@@ -964,6 +1056,7 @@ function mgrLogin() {
   if (!mgr) { document.getElementById('mgr-error').textContent = 'Invalid credentials.'; return; }
   session = { role:'manager', empId: null, mgrId: mgr.id };
   document.getElementById('mgr-sidebar-name').textContent = mgr.name;
+  document.getElementById('mgr-topbar-name').textContent = mgr.name;
   document.getElementById('mgr-user-input').value = '';
   document.getElementById('mgr-pass-input').value = '';
   showScreen('manager-app');
