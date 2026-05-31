@@ -159,6 +159,7 @@ input, textarea, select, button { font-family: var(--sans); }
 
 /* CLOCK PAGE */
 #clock-page { text-align: center; }
+#clock-page.active { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; }
 .clock-status-banner {
   display: inline-flex; align-items: center; gap: 8px; padding: 6px 16px;
   border-radius: 20px; font-size: 0.75rem; font-weight: 500; margin-bottom: 3rem;
@@ -373,6 +374,31 @@ tr:hover td { background: var(--surface2); }
 }
 .color-swatch.selected { border-color: var(--text); transform: scale(1.15); }
 
+/* SCHEDULE CARDS (employee view) */
+.sched-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r2);
+  padding: 1.2rem 1.4rem; margin-bottom: 10px; display: flex; align-items: center; gap: 1.2rem;
+  transition: border-color 0.15s;
+}
+.sched-card:hover { border-color: var(--border); }
+.sched-card.today { border-color: rgba(110,231,183,0.4); background: rgba(110,231,183,0.04); }
+.sched-card.past { opacity: 0.55; }
+.sched-date-block {
+  text-align: center; min-width: 52px; background: var(--surface2);
+  border-radius: var(--r); padding: 8px 6px;
+}
+.sched-date-day { font-family: var(--mono); font-size: 1.4rem; font-weight: 500; line-height: 1; }
+.sched-date-mon { font-size: 0.65rem; color: var(--text3); text-transform: uppercase; letter-spacing: 0.08em; margin-top: 2px; }
+.sched-card-info { flex: 1; }
+.sched-card-time { font-family: var(--mono); font-size: 1rem; font-weight: 500; }
+.sched-card-dept { font-size: 0.75rem; color: var(--text3); margin-top: 3px; }
+.sched-card-duration { font-size: 0.72rem; color: var(--text3); margin-top: 2px; }
+.today-badge { font-size: 0.68rem; font-weight: 600; color: var(--accent); background: rgba(110,231,183,0.12); padding: 3px 10px; border-radius: 20px; border: 1px solid rgba(110,231,183,0.25); }
+
+/* MGR DASH PANELS */
+.dash-panels { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media(max-width: 900px) { .dash-panels { grid-template-columns: 1fr; } }
+
 /* SECTION DIVIDER */
 .section-gap { margin-top: 2rem; }
 .divider { border: none; border-top: 1px solid var(--border); margin: 1.5rem 0; }
@@ -474,6 +500,9 @@ hr.section { border: none; border-top: 1px solid var(--border); margin: 1.5rem 0
       <div class="nav-item" id="nav-history" onclick="showEmpPage('history-page')">
         <span class="nav-icon">📋</span> Shift History
       </div>
+      <div class="nav-item" id="nav-schedule" onclick="showEmpPage('my-schedule-page')">
+        <span class="nav-icon">🗓</span> My Schedule
+      </div>
       <div class="nav-item" id="nav-avail" onclick="showEmpPage('availability-page')">
         <span class="nav-icon">📅</span> My Availability
       </div>
@@ -486,7 +515,7 @@ hr.section { border: none; border-top: 1px solid var(--border); margin: 1.5rem 0
   <div class="main">
 
     <!-- CLOCK PAGE -->
-    <div id="clock-page" class="page active" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:2rem;">
+    <div id="clock-page" class="page active" style="padding:2rem;">
       <div class="clock-status-banner" id="clock-banner">
         <div class="dot"></div>
         <span id="clock-banner-text">Not clocked in</span>
@@ -578,6 +607,22 @@ hr.section { border: none; border-top: 1px solid var(--border); margin: 1.5rem 0
       </div>
     </div>
 
+    <!-- MY SCHEDULE PAGE -->
+    <div id="my-schedule-page" class="page">
+      <div class="page-header">
+        <div>
+          <div class="page-title">My Schedule</div>
+          <div class="page-sub">Shifts assigned to you by management</div>
+        </div>
+      </div>
+      <div class="period-tabs" id="sched-period-tabs">
+        <button class="period-tab active" onclick="setSchedView('upcoming',this)">Upcoming</button>
+        <button class="period-tab" onclick="setSchedView('week',this)">This Week</button>
+        <button class="period-tab" onclick="setSchedView('all',this)">All</button>
+      </div>
+      <div id="my-schedule-list"></div>
+    </div>
+
   </div>
 </div>
 
@@ -622,7 +667,7 @@ hr.section { border: none; border-top: 1px solid var(--border); margin: 1.5rem 0
         </div>
       </div>
       <div class="stats-grid" id="mgr-stats-grid"></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;flex-wrap:wrap" id="mgr-dash-panels"></div>
+      <div class="dash-panels" id="mgr-dash-panels"></div>
     </div>
 
     <!-- EMPLOYEES -->
@@ -777,17 +822,18 @@ let historyPeriod = 'week';
 
 function loadState() {
   try {
-    const saved = localStorage.getItem('shiftwise_v2');
+    const saved = localStorage.getItem('shiftwise_v3');
     state = saved ? JSON.parse(saved) : JSON.parse(JSON.stringify(DEFAULT_STATE));
   } catch(e) {
     state = JSON.parse(JSON.stringify(DEFAULT_STATE));
   }
-  // seed demo sessions
+  // seed demo sessions and schedules if missing
   if (state.clockSessions.length === 0) seedDemoSessions();
+  else if (state.schedules.length === 0) seedDemoSchedules();
 }
 
 function saveState() {
-  localStorage.setItem('shiftwise_v2', JSON.stringify(state));
+  localStorage.setItem('shiftwise_v3', JSON.stringify(state));
 }
 
 function seedDemoSessions() {
@@ -811,6 +857,34 @@ function seedDemoSessions() {
     });
   }
   state.clockSessions = sessions;
+
+  seedDemoSchedules();
+  saveState();
+}
+
+function seedDemoSchedules() {
+  const now = new Date();
+  const empIds = ['e1','e2','e3','e4','e5'];
+  const deptMap = { e1:'d1', e2:'d2', e3:'d3', e4:'d4', e5:'d5' };
+  for (let d = 0; d <= 6; d++) {
+    const date = new Date(now); date.setDate(now.getDate() + d);
+    const dow = date.getDay();
+    empIds.forEach(eid => {
+      const avail = state.availability[eid];
+      if (!avail || !avail.days.includes(dow)) return;
+      if (Math.random() < 0.2) return;
+      const dateStr = toDateStr(date);
+      if (state.schedules.some(s => s.employeeId === eid && s.date === dateStr)) return;
+      state.schedules.push({
+        id: 'sc'+state.nextId++,
+        employeeId: eid,
+        date: dateStr,
+        startTime: avail.startTime || '09:00',
+        endTime: avail.endTime || '17:00',
+        departmentId: deptMap[eid] || null
+      });
+    });
+  }
   saveState();
 }
 
@@ -828,11 +902,12 @@ function showEmpPage(pageId) {
   document.querySelectorAll('#employee-app .page').forEach(p => p.classList.remove('active'));
   document.getElementById(pageId).classList.add('active');
   document.querySelectorAll('#employee-app .nav-item').forEach(n => n.classList.remove('active'));
-  const map = { 'clock-page':'nav-clock', 'history-page':'nav-history', 'availability-page':'nav-avail' };
+  const map = { 'clock-page':'nav-clock', 'history-page':'nav-history', 'my-schedule-page':'nav-schedule', 'availability-page':'nav-avail' };
   if (map[pageId]) document.getElementById(map[pageId]).classList.add('active');
   if (pageId === 'history-page') renderHistory();
   if (pageId === 'availability-page') renderAvailabilityForm();
   if (pageId === 'clock-page') renderClockPage();
+  if (pageId === 'my-schedule-page') renderMySchedule();
 }
 
 function showMgrPage(pageId) {
@@ -943,6 +1018,12 @@ function renderClockPage() {
   const dept = emp ? state.departments.find(d => d.id === emp.departmentId) : null;
   const weekMins = getSessionMinutes(empId, 'week');
   const monthMins = getSessionMinutes(empId, 'month');
+
+  // today's scheduled shift
+  const todayStr = toDateStr(new Date());
+  const todayShift = state.schedules.find(s => s.employeeId === empId && s.date === todayStr);
+  const todayShiftDept = todayShift ? state.departments.find(d => d.id === todayShift.departmentId) : null;
+
   statsRow.innerHTML = `
     <div class="stat-tile" style="text-align:center;min-width:120px">
       <div class="stat-label">This Week</div>
@@ -957,6 +1038,11 @@ function renderClockPage() {
     ${dept ? `<div class="stat-tile" style="text-align:center;min-width:120px">
       <div class="stat-label">Department</div>
       <div style="margin-top:4px"><span class="dept-chip" style="border-color:${dept.color}33;background:${dept.color}15"><span class="dept-dot" style="background:${dept.color}"></span>${dept.name}</span></div>
+    </div>` : ''}
+    ${todayShift ? `<div class="stat-tile" style="text-align:center;min-width:140px">
+      <div class="stat-label">Today's Shift</div>
+      <div style="font-family:var(--mono);font-size:1rem;margin-top:4px;color:var(--accent)">${todayShift.startTime} – ${todayShift.endTime}</div>
+      <div style="font-size:0.7rem;color:var(--text3);margin-top:2px">${todayShiftDept ? todayShiftDept.name : ''}</div>
     </div>` : ''}
   `;
 }
@@ -1068,6 +1154,74 @@ function filterSessions(empId, period) {
 
 function getSessionMinutes(empId, period) {
   return filterSessions(empId, period).reduce((s,x) => s + (x.totalMinutes||0), 0);
+}
+
+// ══════════════════════════════════════
+//  MY SCHEDULE (employee view)
+// ══════════════════════════════════════
+let mySchedView = 'upcoming';
+
+function setSchedView(view, btn) {
+  mySchedView = view;
+  document.querySelectorAll('#sched-period-tabs .period-tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  renderMySchedule();
+}
+
+function renderMySchedule() {
+  const empId = session.empId;
+  const now = new Date();
+  const todayStr = toDateStr(now);
+
+  let schedules = state.schedules.filter(s => s.employeeId === empId);
+
+  if (mySchedView === 'upcoming') {
+    schedules = schedules.filter(s => s.date >= todayStr);
+  } else if (mySchedView === 'week') {
+    const mon = toDateStr(getMondayOf(now));
+    const sun = new Date(getMondayOf(now)); sun.setDate(sun.getDate() + 6);
+    const sunStr = toDateStr(sun);
+    schedules = schedules.filter(s => s.date >= mon && s.date <= sunStr);
+  }
+
+  schedules.sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
+
+  const container = document.getElementById('my-schedule-list');
+  if (!schedules.length) {
+    container.innerHTML = `<div class="empty-state"><div class="empty-icon">🗓</div><p>No shifts scheduled${mySchedView==='upcoming'?' — check back later':' for this period'}</p></div>`;
+    return;
+  }
+
+  container.innerHTML = schedules.map(s => {
+    const dept = state.departments.find(d => d.id === s.departmentId);
+    const deptColor = dept ? dept.color : '#6ee7b7';
+    const isToday = s.date === todayStr;
+    const isPast = s.date < todayStr;
+    const dateObj = new Date(s.date + 'T00:00:00');
+    const dayNum = dateObj.getDate();
+    const monName = dateObj.toLocaleString('en-GB', { month: 'short' });
+    const dayName = dateObj.toLocaleString('en-GB', { weekday: 'short' });
+
+    const [sh, sm] = s.startTime.split(':').map(Number);
+    const [eh, em] = s.endTime.split(':').map(Number);
+    let dur = (eh * 60 + em) - (sh * 60 + sm);
+    if (dur < 0) dur += 24 * 60;
+    const durStr = dur >= 60 ? `${Math.floor(dur/60)}h ${dur%60>0?dur%60+'m':''}`.trim() : `${dur}m`;
+
+    return `<div class="sched-card ${isToday?'today':''} ${isPast?'past':''}">
+      <div class="sched-date-block" style="border-left:3px solid ${deptColor}">
+        <div class="sched-date-day" style="color:${isToday?'var(--accent)':'var(--text)'}">${dayNum}</div>
+        <div class="sched-date-mon">${monName}</div>
+        <div style="font-size:0.6rem;color:var(--text3);margin-top:1px">${dayName}</div>
+      </div>
+      <div class="sched-card-info">
+        <div class="sched-card-time">${s.startTime} – ${s.endTime}</div>
+        <div class="sched-card-dept">${dept ? dept.name : 'No department assigned'}</div>
+        <div class="sched-card-duration">Duration: ${durStr}</div>
+      </div>
+      <div>${isToday ? '<span class="today-badge">Today</span>' : isPast ? '<span class="badge badge-gray">Past</span>' : '<span class="badge badge-blue">Upcoming</span>'}</div>
+    </div>`;
+  }).join('');
 }
 
 // ══════════════════════════════════════
