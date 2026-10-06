@@ -24,6 +24,7 @@
   --sans: 'Sora', sans-serif;
   --r: 10px;
   --r2: 16px;
+  color-scheme: dark;
 }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html { font-size: 15px; -webkit-tap-highlight-color: transparent; }
@@ -34,7 +35,7 @@ button { -webkit-user-select: none; user-select: none; touch-action: manipulatio
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 
 /* TOP BAR */
-.top { position: sticky; top: 0; z-index: 20; background: rgba(14,15,17,0.92); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; background: rgba(14,15,17,0.92); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
 .top-in { max-width: 960px; margin: 0 auto; display: flex; align-items: center; gap: 12px; padding: 10px 16px; }
 .brand { font-family: var(--mono); color: var(--accent); font-size: 1.05rem; letter-spacing: -1px; line-height: 1.15; }
 .brand small { display: block; font-family: var(--sans); font-size: 0.66rem; color: var(--text3); letter-spacing: 0; }
@@ -216,6 +217,14 @@ select.input { background-image: linear-gradient(45deg, transparent 50%, var(--t
 #toast { position: fixed; left: 50%; top: calc(64px + env(safe-area-inset-top)); transform: translateX(-50%) translateY(-12px); background: var(--surface3); border: 1px solid var(--border); color: var(--text); padding: 10px 14px; border-radius: 12px; font-size: 0.82rem; z-index: 90; opacity: 0; pointer-events: none; transition: all 0.2s; display: flex; gap: 14px; align-items: center; max-width: calc(100vw - 32px); }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
 #toast button { background: none; border: none; color: var(--accent); font-weight: 700; cursor: pointer; font-size: 0.82rem; }
+#dlg { position: fixed; inset: 0; z-index: 80; background: rgba(0,0,0,0.65); display: none; align-items: center; justify-content: center; padding: 16px; }
+#dlg.open { display: flex; }
+#dlg-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r2); width: 100%; max-width: 420px; max-height: 88vh; overflow-y: auto; padding: 18px 16px; }
+#dlg-box h3 { font-size: 1rem; font-weight: 700; text-wrap: balance; }
+#dlg-box p { font-size: 0.82rem; color: var(--text2); margin-top: 6px; line-height: 1.5; }
+#dlg-box .input { margin-top: 12px; }
+#dlg-box textarea.input { font-family: var(--mono); font-size: 0.72rem; resize: vertical; }
+a.btn { text-decoration: none; }
 #loading { position: fixed; inset: 0; display: grid; place-items: center; background: var(--bg); z-index: 100; color: var(--text3); font-size: 0.85rem; }
 </style>
 </head>
@@ -319,6 +328,7 @@ select.input { background-image: linear-gradient(45deg, transparent 50%, var(--t
 </div>
 
 <div class="overlay" id="overlay" onclick="if(event.target===this)closeSheet()"><div class="sheet" id="sheet"></div></div>
+<div id="dlg"><div id="dlg-box" role="dialog" aria-modal="true"></div></div>
 <div id="toast"><span id="toast-msg"></span><button id="toast-act" hidden></button></div>
 
 <script>
@@ -393,7 +403,14 @@ async function download(name, text, type) {
     } catch (e) { if (!/cancel/i.test(e.message || '')) toast('Export failed: ' + (e.message || e)); }
     return;
   }
-  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  const href = URL.createObjectURL(new Blob([text], { type }));
+  let framed = true; try { framed = window.self !== window.top; } catch (e) {}
+  if (framed) {
+    dialog({ title: name, body: 'If the download doesn\'t start, copy the text and paste it into a file or spreadsheet.', text,
+      extra: `<a class="btn btn-ghost" href="${href}" download="${esc(name)}">⤓ Download</a><button class="btn btn-ghost" onclick="copyText($('dlg-text').value,'Export')">Copy</button>`, ok: 'Done', cancel: false });
+    return;
+  }
+  const a = document.createElement('a'); a.href = href; a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(href); a.remove(); }, 500);
 }
 function csv(rows) { return rows.map(r => r.map(c => { const s = String(c ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(',')).join('\n'); }
 
@@ -406,6 +423,36 @@ function toast(msg, actLabel, actFn) {
   $('toast').classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => $('toast').classList.remove('show'), actLabel ? 5000 : 2600);
+}
+
+// In-app dialogs. Browser confirm()/prompt() are blocked in some embedded
+// views and look out of place on phones.
+let dlgResolve = null;
+function dialog(o) {
+  return new Promise(res => {
+    if (dlgResolve) dlgResolve(null);
+    dlgResolve = res;
+    $('dlg-box').innerHTML = `<h3>${esc(o.title)}</h3>${o.body ? `<p>${o.body}</p>` : ''}
+      ${o.input != null ? `<input class="input" id="dlg-in" value="${esc(o.input)}" ${o.numeric ? 'type="number" inputmode="decimal" step="any" min="0"' : ''} placeholder="${esc(o.placeholder || '')}" onkeydown="if(event.key==='Enter')dlgDone(true)">` : ''}
+      ${o.text != null ? `<textarea class="input" id="dlg-text" rows="8" readonly>${esc(o.text)}</textarea>` : ''}
+      <div class="btn-row">${o.extra || ''}${o.cancel === false ? '' : `<button class="btn btn-ghost" onclick="dlgDone(null)">${esc(o.cancelLabel || 'Cancel')}</button>`}
+      <button class="btn ${o.danger ? 'btn-danger' : 'btn-primary'}" id="dlg-ok" onclick="dlgDone(true)">${esc(o.ok || 'OK')}</button></div>`;
+    $('dlg').classList.add('open');
+    setTimeout(() => { const i = $('dlg-in'); if (i) { i.focus(); i.select(); } else $('dlg-ok').focus(); }, 30);
+  });
+}
+function dlgDone(v) {
+  const i = $('dlg-in');
+  const r = v && i ? i.value : v;
+  $('dlg').classList.remove('open');
+  const f = dlgResolve; dlgResolve = null;
+  if (f) f(r);
+}
+const askConfirm = (title, body, ok, danger) => dialog({ title, body, ok, danger }).then(Boolean);
+async function copyText(text, label) {
+  try { await navigator.clipboard.writeText(text); toast((label || 'Text') + ' copied'); return; } catch (e) {}
+  dialog({ title: 'Copy ' + (label || 'text').toLowerCase(), body: 'Select the text below and copy it.', text, ok: 'Done', cancel: false });
+  setTimeout(() => { const t = $('dlg-text'); if (t) { t.focus(); t.select(); } }, 40);
 }
 
 // ══════════════════════════════════════
@@ -863,7 +910,7 @@ function moveLine(m) {
     <span class="mono right ${m.delta > 0 ? 'pos' : 'neg'}">${m.delta > 0 ? '+' : ''}${fq(m.delta)} ${esc(m.unit || '')}<div class="dim" style="font-size:.68rem">${money(Math.abs(m.delta) * (m.cost || 0))}</div></span>
   </div>`;
 }
-function applyAdjust(id) {
+async function applyAdjust(id) {
   if (!me.name) return askName();
   const it = Store.db.items[id]; if (!it) return;
   const reason = $('adj-reason').value;
@@ -872,7 +919,7 @@ function applyAdjust(id) {
   let delta;
   if (reason === 'count') delta = amt - (+it.qty || 0);
   else delta = amt * REASONS[reason].sign;
-  if (REASONS[reason].sign < 0 && amt > (+it.qty || 0)) { if (!confirm(`Only ${fq(it.qty)} ${it.unit} in stock. Record ${fq(amt)} anyway? Stock will go negative.`)) return; }
+  if (REASONS[reason].sign < 0 && amt > (+it.qty || 0) && !(await askConfirm('Stock will go negative', `Only ${fq(it.qty)} ${esc(it.unit)} of ${esc(it.name)} in stock. Record ${fq(amt)} anyway?`, 'Record anyway'))) return;
   if (!r3(delta)) { toast('No change'); return; }
   const extra = {};
   if (reason === 'count') extra.itemFields = { lastCounted: Date.now(), lastCountedBy: me.name };
@@ -927,9 +974,9 @@ function saveItem(id) {
   });
   closeSheet(); toast(name + ' added');
 }
-function deleteItem(id) {
+async function deleteItem(id) {
   const i = Store.db.items[id];
-  if (!i || !confirm(`Delete ${i.name}? Its history stays in the log.`)) return;
+  if (!i || !(await askConfirm('Delete ' + i.name + '?', 'Its past changes stay in History.', 'Delete', true))) return;
   Store.remove('items', id); closeSheet(); toast('Deleted');
 }
 
@@ -1101,8 +1148,8 @@ function renderOrderSheet(id) {
     ${isOpenOrder(o) ? `<div class="btn-row"><button class="btn btn-primary" onclick="openRunner('order','${o.id}')">📦 ${o.status === 'receiving' ? 'Continue receiving' : 'Receive & cross-check'}</button></div>` : ''}
     <div class="btn-row">
       <button class="btn btn-ghost" onclick="sendOrder('${o.id}','copy')">📋 Copy</button>
-      ${contact.phone ? `<button class="btn btn-ghost" onclick="sendOrder('${o.id}','wa')">💬 WhatsApp</button>` : ''}
-      ${contact.email ? `<button class="btn btn-ghost" onclick="sendOrder('${o.id}','mail')">✉️ Email</button>` : ''}
+      ${contact.phone ? `<a class="btn btn-ghost" target="_blank" rel="noopener" href="${esc('https://wa.me/' + String(contact.phone).replace(/[^\d]/g, '') + '?text=' + encodeURIComponent(orderText(o)))}">💬 WhatsApp</a>` : ''}
+      ${contact.email ? `<a class="btn btn-ghost" href="${esc('mailto:' + contact.email + '?subject=' + encodeURIComponent('Order ' + o.number) + '&body=' + encodeURIComponent(orderText(o)))}">✉️ Email</a>` : ''}
       ${canShare() ? `<button class="btn btn-ghost" onclick="sendOrder('${o.id}','share')">↗ Share</button>` : ''}
     </div>
     ${me.manager ? `<div class="btn-row">
@@ -1119,14 +1166,11 @@ function orderText(o) {
 async function sendOrder(id, via) {
   const o = Store.db.orders[id]; if (!o) return;
   const text = orderText(o);
-  const c = (settings().suppliers || {})[o.supplier] || {};
-  if (via === 'wa') window.open('https://wa.me/' + String(c.phone).replace(/[^\d]/g, '') + '?text=' + encodeURIComponent(text), '_blank');
-  else if (via === 'mail') location.href = 'mailto:' + encodeURIComponent(c.email) + '?subject=' + encodeURIComponent('Order ' + o.number) + '&body=' + encodeURIComponent(text);
-  else if (via === 'share') { try { await shareText('Order ' + o.number, text); } catch (e) {} }
-  else { try { await navigator.clipboard.writeText(text); toast('Order copied'); } catch (e) { prompt('Copy this order:', text); } }
+  if (via === 'share') { try { await shareText('Order ' + o.number, text); } catch (e) {} }
+  else copyText(text, 'Order');
 }
-function cancelOrder(id) { if (confirm('Cancel this order? Nothing will be added to stock.')) { Store.patch('orders', id, { status: 'cancelled', cancelledAt: Date.now(), cancelledBy: me.name }); toast('Order cancelled'); } }
-function deleteOrder(id) { if (confirm('Delete this order permanently?')) { Store.remove('orders', id); closeSheet(); } }
+async function cancelOrder(id) { if (await askConfirm('Cancel this order?', 'Nothing will be added to stock.', 'Cancel order', true)) { Store.patch('orders', id, { status: 'cancelled', cancelledAt: Date.now(), cancelledBy: me.name }); toast('Order cancelled'); } }
+async function deleteOrder(id) { if (await askConfirm('Delete this order?', 'It will be removed permanently.', 'Delete', true)) { Store.remove('orders', id); closeSheet(); } }
 
 // ══════════════════════════════════════
 //  CROSS-CHECK (receiving + stock checks)
@@ -1281,11 +1325,11 @@ function tapFound(lineId, dir) {
   buzz();
   Store.patch(runnerCol(), runner.id, { ['found.' + lineId]: Store.inc(dir < 0 ? -Math.min(1, cur) : 1) });
 }
-function setFound(lineId) {
+async function setFound(lineId) {
   const doc = runnerDoc(); if (!doc) return;
   const l = runnerLines(doc).find(x => x.id === lineId); if (!l) return;
   const blind = runner.kind === 'check' && doc.blind;
-  const v = prompt(blind ? `How many ${l.unit} of ${l.name} did you count?` : `How many ${l.unit} of ${l.name} have you found so far? (expected ${fq(l.expected)})`, fq(l.found));
+  const v = await dialog({ title: l.name, body: blind ? `How many ${esc(l.unit)} did you count?` : `How many ${esc(l.unit)} have you found so far? Expected ${fq(l.expected)}.`, input: fq(l.found), numeric: true, ok: 'Save' });
   if (v === null) return;
   const n = num(v, NaN);
   if (!isFinite(n) || n < 0) return;
@@ -1298,8 +1342,8 @@ function runnerMenu() {
     <button class="btn btn-ghost btn-full" onclick="resetCounts()">↺ Reset all counts to start</button>
     ${runner.kind === 'check' ? `<div style="height:8px"></div><button class="btn btn-danger btn-full" onclick="discardCheck()">Discard this check</button>` : ''}`);
 }
-function resetCounts() { if (confirm('Clear every count on this list?')) { Store.patch(runnerCol(), runner.id, { found: {} }); closeSheet(); } }
-function discardCheck() { if (confirm('Discard this stock check? Stock will not change.')) { Store.remove('checks', runner.id); closeSheet(); closeRunner(); } }
+async function resetCounts() { closeSheet(); if (await askConfirm('Reset all counts?', 'Every line goes back to the starting number.', 'Reset', true)) { Store.patch(runnerCol(), runner.id, { found: {} }); closeSheet(); } }
+async function discardCheck() { closeSheet(); if (await askConfirm('Discard this stock check?', 'Stock will not change.', 'Discard', true)) { Store.remove('checks', runner.id); closeSheet(); closeRunner(); } }
 
 function finishRunner() {
   const doc = runnerDoc(); if (!doc) return;
@@ -1486,20 +1530,20 @@ function exportBackup() { download('stockwise-backup-' + todayStr() + '.json', J
 function importBackup(file) {
   if (!file) return;
   const r = new FileReader();
-  r.onload = () => {
+  r.onload = async () => {
     try {
       const data = JSON.parse(r.result);
       if (!data.db || !data.db.items) throw new Error('Not a StockWise backup');
-      if (!confirm(`Restore ${Object.keys(data.db.items).length} items and their history? Existing records with the same IDs are replaced.`)) return;
+      if (!(await askConfirm('Restore backup?', `${Object.keys(data.db.items).length} items and their history. Records with the same IDs are replaced.`, 'Restore'))) return;
       Store.batch(() => COLS.forEach(col => Object.values(data.db[col] || {}).forEach(d => d && d.id && Store.put(col, d))));
       toast('Backup restored');
     } catch (e) { toast('Restore failed: ' + e.message); }
   };
   r.readAsText(file);
 }
-function wipeAll() {
-  if (!confirm('Delete ALL items, orders, checks and history? This cannot be undone.')) return;
-  if (prompt('Type DELETE to confirm') !== 'DELETE') return;
+async function wipeAll() {
+  const v = await dialog({ title: 'Delete all data?', body: 'Every item, order, check and history entry goes. This cannot be undone. Type DELETE to confirm.', input: '', placeholder: 'DELETE', ok: 'Delete everything', danger: true });
+  if (v !== 'DELETE') return;
   Store.batch(() => ['items', 'orders', 'checks', 'movements'].forEach(col => Object.keys(Store.db[col]).forEach(id => Store.remove(col, id))));
   toast('All data deleted');
 }
