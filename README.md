@@ -41,7 +41,13 @@ Every push runs the **Android APK** workflow in GitHub Actions (`.github/workflo
 
 The app opens on the stock tracker, and ShiftWise is under More → Back to ShiftWise. In the app, CSV exports and backups open the Android share sheet, so you can save to Drive or send them on WhatsApp.
 
-Each build is signed with `keystore/sideload-debug.keystore`, so a new APK installs over the old one and keeps the data. **Uninstalling deletes stock that is saved only on the phone**, so back it up first, or turn on live sync. That key is public in this repo, so it's only fit for sideloading inside your team. For the Play Store, create a private release key and keep it in GitHub secrets.
+The sideload APK is signed with `keystore/sideload-debug.keystore`, so a new one installs over the old one and keeps the data. **Uninstalling deletes stock that is saved only on the phone**, so back it up first, or turn on live sync. That key is public in this repo, so it's only fit for sideloading inside your team.
+
+### Google Play
+
+Each run also builds a signed **Android App Bundle** (artifact **StockWise-PlayStore-AAB**), which is the format Play requires. It's signed with a private upload key held in four repository secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`. Without them, the bundle is signed with a throwaway key and named `TEST-KEY-not-for-Play`.
+
+Store listing text, Data safety answers, screenshots, feature graphic and the release steps are in [`play-store/LISTING.md`](play-store/LISTING.md). The privacy policy is `privacy.html`, published on the website.
 
 To build locally with Android Studio: `npm ci && npm run build:web && npx cap add android && npx cap open android`.
 

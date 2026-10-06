@@ -1744,6 +1744,10 @@ function renderMore() {
       <div class="btn-row"><button class="btn btn-ghost" onclick="loadSampleShared()">Load sample items</button><button class="btn btn-danger" onclick="wipeAll()">Delete all data</button></div>` : ''}
     </div>
 
+    <div class="section-t">About</div>
+    <div class="card" style="font-size:.8rem;color:var(--text2);line-height:1.6">StockWise keeps stock on this device unless live sync is set up. No ads, no tracking.
+      <div class="btn-row"><a class="btn btn-ghost btn-sm" href="https://nayem1703100.github.io/shiftwise/privacy.html" target="_blank" rel="noopener">Privacy policy ↗</a></div></div>
+
     <div class="section-t">Sync</div>
     <div class="card" style="font-size:.8rem;color:var(--text2);line-height:1.6">${syncExplain()}</div>
 
@@ -1878,6 +1882,19 @@ function loadSample(db) {
     } };
 }
 
+// Android back button (in the app): close whatever is on top before leaving
+function onBack() {
+  if ($('dlg').classList.contains('open')) { dlgDone(null); return true; }
+  if ($('overlay').classList.contains('open')) { closeSheet(true); return true; }
+  if (runner.open) { closeRunner(); return true; }
+  if (ui.tab !== 'stock') { setTab('stock'); return true; }
+  return false;
+}
+function hookBackButton() {
+  const app = plugin('App');
+  if (app) app.addListener('backButton', () => { if (!onBack()) app.exitApp(); });
+}
+
 // ══════════════════════════════════════
 //  BOOT
 // ══════════════════════════════════════
@@ -1885,6 +1902,7 @@ function loadSample(db) {
   loadMe();
   await Store.init();
   ready = true;
+  hookBackButton();
   $('loading').remove();
   const p = new URLSearchParams(location.search).get('tab');
   setTab(['stock', 'orders', 'check', 'history', 'more'].includes(p) ? p : 'stock');

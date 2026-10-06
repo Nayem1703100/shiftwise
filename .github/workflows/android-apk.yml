@@ -3,12 +3,16 @@ name: Android APK
 on:
   push:
     branches: [main, 'claude/**']
-    paths-ignore: ['**.md']
+    tags: ['v*']
+    paths-ignore: ['**.md', 'play-store/**']
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      VERSION_CODE: ${{ github.run_number }}
+      VERSION_NAME: 1.0.${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
 
@@ -36,26 +40,73 @@ jobs:
 
       - name: Set version
         run: |
-          sed -i "s/versionCode 1$/versionCode ${{ github.run_number }}/" android/app/build.gradle
-          sed -i "s/versionName \"1.0\"/versionName \"1.0.${{ github.run_number }}\"/" android/app/build.gradle
+          sed -i "s/versionCode 1$/versionCode $VERSION_CODE/" android/app/build.gradle
+          sed -i "s/versionName \"1.0\"/versionName \"$VERSION_NAME\"/" android/app/build.gradle
           grep -E "versionCode|versionName" android/app/build.gradle
 
-      # A fixed key, so each new APK installs over the old one without
-      # uninstalling (which would wipe stock saved on the phone).
-      - name: Use repository signing key
+      # Sideload build: a fixed public key so each APK installs over the last
+      # one without uninstalling (which would wipe stock saved on the phone).
+      - name: Build sideload APK
         run: |
           mkdir -p ~/.android
           cp keystore/sideload-debug.keystore ~/.android/debug.keystore
+          cd android && ./gradlew assembleDebug --no-daemon
 
-      - name: Build APK
+      # Play Store build: signed with the private upload key from repository
+      # secrets. Without them, a throwaway key proves the build works, and the
+      # output is labelled so it can't be mistaken for an upload.
+      - name: Prepare release signing key
+        id: key
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          KS="$RUNNER_TEMP/release.keystore"
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$KS"
+            echo "label=PlayStore" >> "$GITHUB_OUTPUT"
+            {
+              echo "STORE_PASS=$STORE_PASS"
+              echo "KEY_ALIAS=$KEY_ALIAS"
+              echo "KEY_PASS=${KEY_PASS:-$STORE_PASS}"
+            } >> "$GITHUB_ENV"
+          else
+            echo "::warning::ANDROID_KEYSTORE_BASE64 is not set. The AAB is signed with a throwaway test key and cannot be uploaded to Google Play."
+            keytool -genkeypair -keystore "$KS" -storepass testpass -keypass testpass -alias test \
+              -keyalg RSA -keysize 2048 -validity 365 -dname "CN=Test" 2>/dev/null
+            echo "label=TEST-KEY-not-for-Play" >> "$GITHUB_OUTPUT"
+            { echo "STORE_PASS=testpass"; echo "KEY_ALIAS=test"; echo "KEY_PASS=testpass"; } >> "$GITHUB_ENV"
+          fi
+          echo "KS=$KS" >> "$GITHUB_ENV"
+
+      - name: Build release AAB and APK
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon
+        run: |
+          ./gradlew bundleRelease assembleRelease --no-daemon \
+            -Pandroid.injected.signing.store.file="$KS" \
+            -Pandroid.injected.signing.store.password="$STORE_PASS" \
+            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$KEY_PASS"
 
-      - name: Rename APK
-        run: cp android/app/build/outputs/apk/debug/app-debug.apk StockWise-1.0.${{ github.run_number }}.apk
+      - name: Collect outputs
+        run: |
+          mkdir out
+          cp android/app/build/outputs/apk/debug/app-debug.apk "out/StockWise-$VERSION_NAME-sideload.apk"
+          cp android/app/build/outputs/bundle/release/app-release.aab "out/StockWise-$VERSION_NAME-${{ steps.key.outputs.label }}.aab"
+          cp android/app/build/outputs/apk/release/app-release.apk "out/StockWise-$VERSION_NAME-${{ steps.key.outputs.label }}.apk"
+          rm -f "$KS"
+          ls -la out
 
       - uses: actions/upload-artifact@v4
         with:
           name: StockWise-APK
-          path: StockWise-*.apk
+          path: out/*.apk
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: StockWise-PlayStore-AAB
+          path: out/*.aab
           retention-days: 30
