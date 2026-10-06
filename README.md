@@ -20,6 +20,20 @@ Open either file in a browser, or host the folder on any static host such as Git
 
 Staff can count, use and receive stock. Manager mode (PIN, default `1234`, change it under More) is needed to add or edit items, create or cancel orders and change settings. The PIN only prevents accidental edits. It is not security.
 
+### Android app (APK)
+
+Every push runs the **Android APK** workflow in GitHub Actions (`.github/workflows/android-apk.yml`). To install it:
+
+1. Open the repo on GitHub, go to **Actions → Android APK**, and open the latest green run.
+2. Under **Artifacts**, download **StockWise-APK**. It's a zip file, and the `.apk` is inside.
+3. Copy the APK to the phone and open it. Android will ask you to allow installs from that app (Files or Chrome). Allow it once.
+
+The app opens on the stock tracker, and ShiftWise is under More → Back to ShiftWise. In the app, CSV exports and backups open the Android share sheet, so you can save to Drive or send them on WhatsApp.
+
+Each build is signed with `keystore/sideload-debug.keystore`, so a new APK installs over the old one and keeps the data. **Uninstalling deletes stock that is saved only on the phone**, so back it up first, or turn on live sync. That key is public in this repo, so it's only fit for sideloading inside your team. For the Play Store, create a private release key and keep it in GitHub secrets.
+
+To build locally with Android Studio: `npm ci && npm run build:web && npx cap add android && npx cap open android`.
+
 ### Sharing stock between phones (live sync)
 
 Out of the box, data is saved in the browser, so **each device has its own copy**. For staff updates to reach the manager, connect a free Firebase project:

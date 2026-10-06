@@ -374,7 +374,27 @@ function getPath(o, p) { return p.split('.').reduce((a, k) => a == null ? undefi
 function setPath(o, p, v) { const ks = p.split('.'); let a = o; for (let i = 0; i < ks.length - 1; i++) { if (typeof a[ks[i]] !== 'object' || a[ks[i]] === null) a[ks[i]] = {}; a = a[ks[i]]; } a[ks[ks.length - 1]] = v; }
 function initials(name) { return (name || '?').split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2); }
 function buzz() { try { navigator.vibrate && navigator.vibrate(12); } catch (e) {} }
-function download(name, text, type) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500); }
+// Inside the Android app (Capacitor) there are no browser downloads, so files
+// are written to the app cache and handed to the share sheet instead.
+const native = () => !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+const plugin = name => native() && window.Capacitor.Plugins ? window.Capacitor.Plugins[name] : null;
+function canShare() { return !!plugin('Share') || typeof navigator.share === 'function'; }
+async function shareText(title, text) {
+  const sh = plugin('Share');
+  if (sh) return sh.share({ title, text, dialogTitle: title });
+  return navigator.share({ title, text });
+}
+async function download(name, text, type) {
+  const fs = plugin('Filesystem'), sh = plugin('Share');
+  if (fs && sh) {
+    try {
+      const r = await fs.writeFile({ path: name, data: text, directory: 'CACHE', encoding: 'utf8' });
+      await sh.share({ title: name, url: r.uri, dialogTitle: 'Save or send ' + name });
+    } catch (e) { if (!/cancel/i.test(e.message || '')) toast('Export failed: ' + (e.message || e)); }
+    return;
+  }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+}
 function csv(rows) { return rows.map(r => r.map(c => { const s = String(c ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(',')).join('\n'); }
 
 let toastTimer;
@@ -1083,7 +1103,7 @@ function renderOrderSheet(id) {
       <button class="btn btn-ghost" onclick="sendOrder('${o.id}','copy')">📋 Copy</button>
       ${contact.phone ? `<button class="btn btn-ghost" onclick="sendOrder('${o.id}','wa')">💬 WhatsApp</button>` : ''}
       ${contact.email ? `<button class="btn btn-ghost" onclick="sendOrder('${o.id}','mail')">✉️ Email</button>` : ''}
-      ${typeof navigator.share === 'function' ? `<button class="btn btn-ghost" onclick="sendOrder('${o.id}','share')">↗ Share</button>` : ''}
+      ${canShare() ? `<button class="btn btn-ghost" onclick="sendOrder('${o.id}','share')">↗ Share</button>` : ''}
     </div>
     ${me.manager ? `<div class="btn-row">
       ${isOpenOrder(o) ? `<button class="btn btn-danger" onclick="cancelOrder('${o.id}')">Cancel order</button>` : ''}
@@ -1102,7 +1122,7 @@ async function sendOrder(id, via) {
   const c = (settings().suppliers || {})[o.supplier] || {};
   if (via === 'wa') window.open('https://wa.me/' + String(c.phone).replace(/[^\d]/g, '') + '?text=' + encodeURIComponent(text), '_blank');
   else if (via === 'mail') location.href = 'mailto:' + encodeURIComponent(c.email) + '?subject=' + encodeURIComponent('Order ' + o.number) + '&body=' + encodeURIComponent(text);
-  else if (via === 'share') { try { await navigator.share({ title: 'Order ' + o.number, text }); } catch (e) {} }
+  else if (via === 'share') { try { await shareText('Order ' + o.number, text); } catch (e) {} }
   else { try { await navigator.clipboard.writeText(text); toast('Order copied'); } catch (e) { prompt('Copy this order:', text); } }
 }
 function cancelOrder(id) { if (confirm('Cancel this order? Nothing will be added to stock.')) { Store.patch('orders', id, { status: 'cancelled', cancelledAt: Date.now(), cancelledBy: me.name }); toast('Order cancelled'); } }
