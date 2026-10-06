@@ -1,0 +1,85 @@
+# ShiftWise
+
+Two single-file web apps for running a restaurant:
+
+- `index.html`: ShiftWise, for shifts, availability and pay.
+- `stock.html`: StockWise, for stock levels, ordering and cross-checking deliveries and shelves.
+
+Open either file in a browser, or host the folder on any static host such as GitHub Pages. The stock app is linked from the ShiftWise start screen and sidebar.
+
+## StockWise
+
+### What it does
+
+- **Stock list.** Each item shows quantity, unit, unit price, stock value, par level, supplier, storage location, expiry date, when it was last received and counted, and who last changed it. Staff tap − or + to record usage. Filters cover low, out, expiring and on-order items, and the list can be grouped by category, location or supplier.
+- **Update with a reason.** Open an item to record Used, Wasted, Received, Found or Set exact count. Every change goes into the History tab with the person, time and value.
+- **Orders.** A manager picks items, or uses *Fill suggested* to order every low item up to its "order up to" level. Lines are split into one order per supplier. Orders can be copied, shared, or sent by WhatsApp or email if the supplier's contact details are saved.
+- **Sources and price comparison.** One item holds every place it's bought (Booker, Sainsbury's, Head office…), each with its own price, pack size, product code and optional product link, all entered in the same Add/Edit item form. Adding an item whose name already exists offers to add the new sources to the existing item instead of creating a duplicate. **Open ↗** goes to that product, or else to the supplier's website or app (set under More → Suppliers). On Android, a supplier website link opens their app if it's installed. **Orders → Compare prices** ranks items by how much switching to the cheapest source would save per restock, and the order builder lets you pick the source per line, or tap *Use cheapest* to switch them all.
+  Prices are compared per unit and without VAT, because supermarkets show VAT-inclusive prices and cash & carries usually don't. Mark each supplier's "prices include VAT" setting and give items their VAT rate. Prices are entered by hand (suppliers don't publish price feeds), and receiving a delivery updates that source's price. The app shows how old each price is.
+- **Receiving (cross-check).** When a delivery arrives, tap *Receive*. Each line starts at the ordered quantity. Tap **−1 Found** for each one you find and it counts down to ✓. Finishing adds what was found to stock, can update prices, and can put any missing items on a back-order.
+- **Stock checks.** These use the same countdown for scattered stock. You can check everything, one location, one category, low items only, or items not counted in the last 7 days. Use the location chips to work through the walk-in, then the dry store, then the bar. *Blind count* hides the expected number and counts up instead.
+- **Exports.** Stock and history export as CSV, and a full JSON backup can be saved and restored.
+
+Staff can count, use and receive stock. Manager mode (PIN, default `1234`, change it under More) is needed to add or edit items, create or cancel orders and change settings. The PIN only prevents accidental edits. It is not security.
+
+### Website
+
+The repo is published with GitHub Pages, from the branch chosen under **Settings → Pages**:
+
+- StockWise: `https://nayem1703100.github.io/shiftwise/stock.html`
+- ShiftWise: `https://nayem1703100.github.io/shiftwise/`
+
+On a phone, open the stock page in Chrome and tap **⋮ → Install app** (on iPhone, Safari → Share → **Add to Home Screen**). It opens full screen with its own icon. After the first visit, the pages keep working with no signal. Updates arrive automatically the next time the phone is online.
+
+### Android app (APK)
+
+Every push runs the **Android APK** workflow in GitHub Actions (`.github/workflows/android-apk.yml`). To install it:
+
+1. Open the repo on GitHub, go to **Actions → Android APK**, and open the latest green run.
+2. Under **Artifacts**, download **StockWise-APK**. It's a zip file, and the `.apk` is inside.
+3. Copy the APK to the phone and open it. Android will ask you to allow installs from that app (Files or Chrome). Allow it once.
+
+The app opens on the stock tracker, and ShiftWise is under More → Back to ShiftWise. In the app, CSV exports and backups open the Android share sheet, so you can save to Drive or send them on WhatsApp.
+
+Each build is signed with `keystore/sideload-debug.keystore`, so a new APK installs over the old one and keeps the data. **Uninstalling deletes stock that is saved only on the phone**, so back it up first, or turn on live sync. That key is public in this repo, so it's only fit for sideloading inside your team. For the Play Store, create a private release key and keep it in GitHub secrets.
+
+To build locally with Android Studio: `npm ci && npm run build:web && npx cap add android && npx cap open android`.
+
+### Sharing stock between phones (live sync)
+
+Out of the box, data is saved in the browser, so **each device has its own copy**. For staff updates to reach the manager, connect a free Firebase project:
+
+1. Go to <https://console.firebase.google.com>, create a project, and add a **Web app**. Copy the `firebaseConfig` object it shows you.
+2. Open **Build → Firestore Database** and create a database.
+3. Open **Build → Authentication → Sign-in method** and enable **Anonymous**.
+4. In **Firestore → Rules**, paste:
+
+   ```
+   rules_version = '2';
+   service cloud.firestore {
+     match /databases/{db}/documents {
+       match /restaurants/{rid}/{col}/{doc} {
+         allow read, write: if request.auth != null;
+       }
+     }
+   }
+   ```
+
+5. In `stock.html`, replace `const FIREBASE_CONFIG = null;` with your config, for example:
+
+   ```js
+   const FIREBASE_CONFIG = {
+     apiKey: "…",
+     authDomain: "your-project.firebaseapp.com",
+     projectId: "your-project",
+     storageBucket: "your-project.appspot.com",
+     messagingSenderId: "…",
+     appId: "…"
+   };
+   ```
+
+The badge next to the logo changes from **This device** to **Live**. Changes made without signal are kept on the phone and upload when it reconnects. Quantity changes and count taps are sent as increments, so two people updating the same item, or checking different rooms at the same time, don't overwrite each other.
+
+To move existing local data to the shared database, export a backup (More → Full backup) before you add the config, then restore it afterwards.
+
+Anonymous auth stops casual access, but anyone who has the page URL can still sign in. If the app is on a public URL, add real staff logins before you rely on it.
