@@ -175,6 +175,22 @@ select.input { background-image: linear-gradient(45deg, transparent 50%, var(--t
 .b-line .input { padding: 8px; font-family: var(--mono); text-align: right; }
 .b-line.sel .item-name { color: var(--accent); }
 
+/* SOURCES + COMPARE */
+.src-row { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.src-row:last-child { border-bottom: none; }
+.src-row .grow { flex: 1; min-width: 0; }
+.src-name { font-weight: 600; font-size: 0.86rem; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.src-meta { font-size: 0.7rem; color: var(--text3); margin-top: 3px; }
+.cmp-track { height: 6px; background: var(--surface3); border-radius: 3px; margin-top: 6px; overflow: hidden; }
+.cmp-track > i { display: block; height: 100%; border-radius: 3px; background: var(--text3); }
+.cmp-track > i.best { background: var(--accent); }
+.src-edit { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r); padding: 10px; margin-bottom: 8px; }
+.src-edit .form-grid { grid-template-columns: 1fr 1fr 1fr; }
+.src-edit .form-grid .wide { grid-column: span 2; }
+@media (max-width: 480px) { .src-edit .form-grid { grid-template-columns: 1fr 1fr; } .src-edit .form-grid .wide { grid-column: 1 / -1; } }
+.b-src { margin-top: 5px; padding: 5px 26px 5px 8px; font-size: 0.74rem; width: auto; max-width: 100%; }
+.save-hint { font-size: 0.68rem; color: var(--accent); margin-top: 3px; }
+
 /* RUNNER (cross-check) */
 #runner { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: none; flex-direction: column; }
 #runner.open { display: flex; }
@@ -268,6 +284,7 @@ a.btn { text-decoration: none; }
       <div><div class="page-title">Orders</div><div class="page-sub">Stock you've ordered from suppliers</div></div>
       <button class="btn btn-primary btn-sm" onclick="newOrder()">＋ New order</button>
     </div>
+    <div class="seg" id="order-mode" style="margin-bottom:12px"><button data-v="orders" onclick="ui.ordersMode='orders';renderOrders()">Orders</button><button data-v="compare" onclick="ui.ordersMode='compare';renderOrders()">Compare prices</button></div>
     <div class="chips" id="order-chips"></div>
     <div id="order-list"></div>
   </section>
@@ -597,9 +614,43 @@ function suggestedQty(it, onOrder) {
 }
 function supplierList() {
   const s = new Set(items().map(i => i.supplier).filter(Boolean));
+  items().forEach(i => itemSources(i).forEach(x => x.name && s.add(x.name)));
   Object.keys(settings().suppliers || {}).forEach(k => s.add(k));
   return [...s].sort((a, b) => a.localeCompare(b));
 }
+// ── Sources: where an item can be bought, at what price ──
+function supInfo(name) { return (settings().suppliers || {})[name] || {}; }
+function safeUrl(u) {
+  u = String(u || '').trim();
+  if (!u) return '';
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(u)) u = 'https://' + u;
+  return /^https?:\/\//i.test(u) ? u : '';
+}
+function itemSources(i) {
+  if (Array.isArray(i.sources) && i.sources.length) return i.sources;
+  return i.supplier ? [{ name: i.supplier, price: +i.cost || 0, pack: 1, url: '', code: '', updatedAt: i.updatedAt || null }] : [];
+}
+function findSource(i, name) { return itemSources(i).find(x => x.name === name) || null; }
+// Price per stock unit, as the supplier lists it
+function srcUnit(src) { return (+src.price || 0) / (+src.pack || 1); }
+// Per unit and without VAT, so suppliers that show VAT and ones that don't compare fairly
+function srcCompare(src, item) {
+  const u = srcUnit(src), vat = +item.vat || 0;
+  return supInfo(src.name).vatIncluded && vat ? u / (1 + vat / 100) : u;
+}
+function cheapestSource(i) {
+  const list = itemSources(i).filter(x => +x.price > 0);
+  return list.length ? list.reduce((a, b) => srcCompare(b, i) < srcCompare(a, i) ? b : a) : null;
+}
+function sourceLink(src, item) {
+  if (!src) return '';
+  if (src.url) return safeUrl(src.url);
+  const info = supInfo(src.name);
+  if (info.searchUrl && info.searchUrl.includes('{q}')) return safeUrl(info.searchUrl.replace('{q}', encodeURIComponent(item.name)));
+  return safeUrl(info.url);
+}
+function restockQty(i) { return Math.max((+i.target || (+i.par || 0) * 2) - (+i.par || 0), +i.step || 1); }
+
 function distinct(field) { return [...new Set(items().map(i => i[field]).filter(Boolean))].sort((a, b) => a.localeCompare(b)); }
 
 // Every stock change goes through here so it is logged
@@ -680,7 +731,7 @@ function needMgr(fn) {
 //  NAV + RENDER
 // ══════════════════════════════════════
 let ready = false;
-const ui = { tab: 'stock', q: '', loc: '', sort: 'cat', filter: 'all', orderFilter: 'open', hq: '', hReason: 'all' };
+const ui = { ordersMode: 'orders', cmpFilter: 'multi', tab: 'stock', q: '', loc: '', sort: 'cat', filter: 'all', orderFilter: 'open', hq: '', hReason: 'all' };
 
 function setTab(t) {
   ui.tab = t;
@@ -878,6 +929,8 @@ function renderItemSheet(id) {
       <div><div class="k">Last update</div><div class="v">${ago(i.updatedAt)}${i.updatedBy ? ' · ' + esc(i.updatedBy) : ''}</div></div>
     </div>
     ${i.notes ? `<div class="card" style="margin-top:8px;font-size:.8rem;color:var(--text2)">${esc(i.notes)}</div>` : ''}
+    <div class="section-t" style="display:flex;justify-content:space-between;align-items:center"><span>Where to buy</span>${me.manager ? `<button class="btn btn-ghost btn-sm" onclick="editSources('${id}')">✏️ Sources</button>` : ''}</div>
+    ${sourceList(i)}
     ${openOrders.length ? `<div class="section-t">Open orders</div>` + openOrders.map(o => `<div class="row-line card tap" style="margin:0 0 6px;padding:8px 12px" onclick="openOrder('${o.id}')"><span class="grow">${esc(o.number)} · ${esc(o.supplier)}</span><span class="mono">+${fq(o.lines.filter(l => l.itemId === id).reduce((s, l) => s + +l.qty, 0))}</span></div>`).join('') : ''}
 
     <div class="section-t">Update stock</div>
@@ -902,6 +955,93 @@ function renderItemSheet(id) {
   $('adj-amt').value = prevAmt;
   $('adj-note').value = prevNote;
 }
+function sourceList(i, compact) {
+  const wrap = compact ? '' : 'card';
+  const list = itemSources(i);
+  if (!list.length) return `<div class="dim" style="font-size:.8rem">No sources yet.${me.manager ? ' Add where you buy this, with price and link, to compare suppliers.' : ''}</div>`;
+  const best = cheapestSource(i);
+  const max = Math.max(...list.map(x => srcCompare(x, i)), 0.0001);
+  const sorted = [...list].sort((a, b) => (srcCompare(a, i) || 1e9) - (srcCompare(b, i) || 1e9));
+  return `<div class="${wrap}" style="padding:${compact ? 0 : '2px 12px'}">${sorted.map(x => {
+    const link = sourceLink(x, i), info = supInfo(x.name);
+    const isBest = best && x.name === best.name && list.filter(y => +y.price > 0).length > 1;
+    const stale = x.updatedAt && Date.now() - x.updatedAt > 30 * DAY;
+    const pack = +x.pack || 1;
+    const vatNote = info.vatIncluded && +i.vat ? ` · incl. ${fq(i.vat)}% VAT → ${money(srcCompare(x, i))} ex VAT` : '';
+    return `<div class="src-row"><div class="grow">
+        <div class="src-name">${esc(x.name)}${x.name === i.supplier ? '<span class="pill info">Preferred</span>' : ''}${isBest ? '<span class="pill ok">Cheapest</span>' : ''}</div>
+        <div class="src-meta">${+x.price ? `${money(x.price)}${pack !== 1 ? ` per pack of ${fq(pack)} ${esc(i.unit)} · ${money(srcUnit(x))}/${esc(i.unit)}` : `/${esc(i.unit)}`}${vatNote}` : 'No price yet'}${x.code ? ' · code ' + esc(x.code) : ''}
+          · <span class="${stale ? 'warn' : ''}">${x.updatedAt ? 'price ' + ago(x.updatedAt) : 'price date unknown'}</span></div>
+        ${compact ? '' : `<div class="cmp-track"><i class="${isBest ? 'best' : ''}" style="width:${+x.price ? srcCompare(x, i) / max * 100 : 0}%"></i></div>`}
+      </div>
+      ${link ? `<a class="btn btn-ghost btn-sm" href="${esc(link)}" target="_blank" rel="noopener" title="Open ${esc(x.name)}">Open ↗</a>` : ''}
+      ${compact ? '' : `<button class="btn btn-ghost btn-sm" data-src="${esc(x.name)}" onclick="orderOne('${i.id}', this.dataset.src)">Order</button>`}
+    </div>`;
+  }).join('')}</div>`;
+}
+
+// ── SOURCES EDITOR ──
+let srcDraft = null;
+function editSources(id) {
+  if (!needMgr(() => editSources(id))) return;
+  const i = Store.db.items[id]; if (!i) return;
+  srcDraft = { id, list: clone(itemSources(i)), preferred: i.supplier || '' };
+  if (!srcDraft.list.length) srcDraft.list.push({ name: '', price: 0, pack: 1, url: '', code: '' });
+  renderSrcEditor();
+}
+function collectSrc() {
+  document.querySelectorAll('.src-edit').forEach((row, k) => {
+    const g = f => row.querySelector('[data-f="' + f + '"]').value.trim();
+    Object.assign(srcDraft.list[k], { name: g('name'), price: num(g('price')), pack: num(g('pack'), 1) || 1, url: g('url'), code: g('code') });
+  });
+  const pref = document.querySelector('input[name="src-pref"]:checked');
+  if (pref) srcDraft.preferred = srcDraft.list[+pref.value].name;
+}
+function renderSrcEditor() {
+  const i = Store.db.items[srcDraft.id]; if (!i) return;
+  openSheet('static', `
+    <div class="sheet-head"><h2>Sources · ${esc(i.name)}<div class="sub">Where you can buy it. Price is per pack; pack size is in ${esc(i.unit || 'units')}.</div></h2><button class="x" onclick="openItem('${i.id}')">✕</button></div>
+    ${srcDraft.list.map((x, k) => `<div class="src-edit">
+      <div class="form-grid">
+        <div class="field wide"><label>Source</label><input class="input" data-f="name" list="dl-src" value="${esc(x.name)}" placeholder="e.g. Booker, Head office"></div>
+        <div class="field"><label>Pack price (${esc(settings().currency)})</label><input class="input" data-f="price" type="number" inputmode="decimal" step="any" min="0" value="${+x.price ? fq(x.price) : ''}"></div>
+        <div class="field"><label>Pack size (${esc(i.unit || 'units')})</label><input class="input" data-f="pack" type="number" inputmode="decimal" step="any" min="0.001" value="${fq(x.pack || 1)}"></div>
+        <div class="field"><label>Product code</label><input class="input" data-f="code" value="${esc(x.code || '')}"></div>
+        <div class="field full"><label>Product link (optional)</label><input class="input" data-f="url" type="url" value="${esc(x.url || '')}" placeholder="Paste the product page from the supplier's site or app"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+        <label class="check-row" style="margin:0"><input type="radio" name="src-pref" value="${k}" ${x.name && x.name === srcDraft.preferred ? 'checked' : ''}> Preferred source</label>
+        <button class="btn btn-ghost btn-sm" onclick="collectSrc();srcDraft.list.splice(${k},1);renderSrcEditor()">Remove</button>
+      </div></div>`).join('')}
+    <datalist id="dl-src">${supplierList().map(v => `<option value="${esc(v)}">`).join('')}</datalist>
+    <button class="btn btn-ghost btn-full" onclick="collectSrc();srcDraft.list.push({name:'',price:0,pack:1,url:'',code:''});renderSrcEditor()">＋ Add source</button>
+    <div class="hint dim" style="font-size:.7rem;margin-top:8px">Without a product link, Open goes to the supplier's website (set it under More → Suppliers).</div>
+    <div class="btn-row"><button class="btn btn-ghost" onclick="openItem('${i.id}')">Cancel</button><button class="btn btn-primary" onclick="saveSources()">Save sources</button></div>`);
+}
+function saveSources() {
+  collectSrc();
+  const i = Store.db.items[srcDraft.id]; if (!i) return;
+  const old = itemSources(i), now = Date.now();
+  const seen = new Set();
+  const list = srcDraft.list.filter(x => x.name && !seen.has(x.name) && seen.add(x.name)).map(x => {
+    const prev = old.find(o => o.name === x.name);
+    const changed = !prev || +prev.price !== +x.price || +(prev.pack || 1) !== +x.pack;
+    return { name: x.name, price: r3(x.price), pack: r3(x.pack) || 1, url: safeUrl(x.url), code: x.code || '', updatedAt: changed ? now : (prev.updatedAt || now), updatedBy: changed ? me.name : (prev.updatedBy || me.name) };
+  });
+  const bad = srcDraft.list.find(x => x.url && !safeUrl(x.url));
+  if (bad) { toast('Links must start with http:// or https://'); return; }
+  const preferred = list.find(x => x.name === srcDraft.preferred) ? srcDraft.preferred : (list[0] ? list[0].name : '');
+  Store.patch('items', i.id, { sources: list, supplier: preferred, updatedAt: now, updatedBy: me.name });
+  toast('Sources saved');
+  openItem(i.id);
+}
+function makePreferred(id, name) {
+  if (!needMgr(() => makePreferred(id, name))) return;
+  const i = Store.db.items[id]; if (!i) return;
+  Store.patch('items', id, { sources: clone(itemSources(i)), supplier: name, updatedAt: Date.now(), updatedBy: me.name });
+  toast(name + ' is now preferred for ' + i.name);
+}
+
 function moveLine(m) {
   const r = REASONS[m.reason] || { label: m.reason, icon: '•' };
   return `<div class="row-line">
@@ -950,6 +1090,7 @@ function editItem(id) {
       <div class="field"><label>Expiry date</label><input class="input" id="f-expiry" type="date" value="${esc(i.expiry)}"></div>
       <div class="field"><label>± button step</label><input class="input" id="f-step" type="number" inputmode="decimal" step="any" min="0.001" value="${fq(i.step || 1)}"></div>
       <div class="field"><label>SKU / code</label><input class="input" id="f-sku" value="${esc(i.sku)}"></div>
+      <div class="field"><label>VAT rate</label><select class="input" id="f-vat">${[0, 5, 20].map(v => `<option value="${v}" ${+(i.vat || 0) === v ? 'selected' : ''}>${v}%${v === 0 ? ' (most food)' : v === 20 ? ' (cleaning, soft drinks)' : ''}</option>`).join('')}</select><div class="hint">Used to compare suppliers fairly</div></div>
       <div class="field full"><label>Notes</label><input class="input" id="f-notes" value="${esc(i.notes)}" placeholder="Storage, brand, allergens…"></div>
     </div>
     ${dl('dl-cat', distinct('category'))}${dl('dl-unit', UNITS)}${dl('dl-sup', supplierList())}${dl('dl-loc', distinct('location'))}
@@ -962,10 +1103,16 @@ function saveItem(id) {
   if (!name) { $('f-name').focus(); return; }
   const fields = {
     name, category: g('category'), unit: g('unit') || 'pcs', cost: num(g('cost')), par: num(g('par')), target: num(g('target')),
-    supplier: g('supplier'), location: g('location'), expiry: g('expiry'), sku: g('sku'), notes: g('notes'), step: num(g('step'), 1) || 1,
+    supplier: g('supplier'), location: g('location'), expiry: g('expiry'), sku: g('sku'), notes: g('notes'), step: num(g('step'), 1) || 1, vat: num(g('vat')),
     updatedAt: Date.now(), updatedBy: me.name,
   };
-  if (id) { Store.patch('items', id, fields); toast('Saved'); openItem(id); return; }
+  if (id) {
+    // A new preferred supplier typed here becomes one of the item's sources
+    const cur = Store.db.items[id];
+    if (cur && Array.isArray(cur.sources) && cur.sources.length && fields.supplier && !cur.sources.some(x => x.name === fields.supplier))
+      fields.sources = cur.sources.concat([{ name: fields.supplier, price: fields.cost, pack: 1, url: '', code: '', updatedAt: Date.now(), updatedBy: me.name }]);
+    Store.patch('items', id, fields); toast('Saved'); openItem(id); return;
+  }
   const nid = 'i' + uid();
   const qty = num(g('qty'));
   Store.batch(() => {
@@ -994,6 +1141,8 @@ function orderFound(o) { return (o.lines || []).reduce((s, l) => s + Math.min(+(
 function orderQty(o) { return (o.lines || []).reduce((s, l) => s + (+l.qty || 0), 0); }
 
 function renderOrders() {
+  document.querySelectorAll('#order-mode button').forEach(b => b.classList.toggle('on', b.dataset.v === ui.ordersMode));
+  if (ui.ordersMode === 'compare') return renderCompare();
   const all = Object.values(Store.db.orders).sort((a, b) => b.createdAt - a.createdAt);
   const f = ui.orderFilter;
   const counts = { open: all.filter(isOpenOrder).length, received: all.filter(o => o.status === 'received').length, cancelled: all.filter(o => o.status === 'cancelled').length, all: all.length };
@@ -1032,24 +1181,63 @@ function orderCard(o) {
   </div>`;
 }
 
+// ── PRICE COMPARISON ──
+function renderCompare() {
+  const all = items();
+  const multi = all.filter(i => itemSources(i).filter(x => +x.price > 0).length > 1);
+  const single = all.filter(i => itemSources(i).filter(x => +x.price > 0).length <= 1);
+  const gain = i => {
+    const pref = findSource(i, i.supplier), best = cheapestSource(i);
+    if (!pref || !best || !+pref.price || best.name === pref.name) return 0;
+    return Math.max(0, (srcCompare(pref, i) - srcCompare(best, i)) * restockQty(i));
+  };
+  const saveable = multi.filter(i => gain(i) > 0.005);
+  const total = saveable.reduce((t, i) => t + gain(i), 0);
+  $('order-chips').innerHTML = [['multi', '2+ sources', multi.length], ['save', 'Could save', saveable.length], ['single', 'One source', single.length]]
+    .map(([k, l, n]) => `<button class="chip ${ui.cmpFilter === k ? 'on' : ''}" onclick="ui.cmpFilter='${k}';renderOrders()">${l}<b>${n}</b></button>`).join('');
+  let h = `<div class="card" style="margin-top:8px">${saveable.length
+    ? `<div class="item-name" style="white-space:normal">Switching ${saveable.length} item${saveable.length > 1 ? 's' : ''} to the cheapest source saves about <span class="pos">${money(total)}</span> per restock</div>`
+    : `<div class="item-name" style="white-space:normal">${multi.length ? 'Your preferred sources are already the cheapest' : 'Add a second source to an item to compare prices'}</div>`}
+    <div class="meta" style="white-space:normal">Compared per unit and without VAT. A restock is the gap between par and order-up-to. Prices are the last ones entered or paid; check them before you switch.</div></div>`;
+  if (ui.cmpFilter === 'single') {
+    h += single.length ? single.sort((a, b) => a.name.localeCompare(b.name)).map(i => `<div class="card tap" onclick="openItem('${i.id}')"><div class="item-name">${esc(i.name)}</div><div class="meta">${esc(itemSources(i).map(x => x.name).join(', ') || 'No source')}${me.manager ? ' · tap to add another source' : ''}</div></div>`).join('') : '<div class="empty">Every item has at least two priced sources.</div>';
+  } else {
+    const list = (ui.cmpFilter === 'save' ? saveable : multi).sort((a, b) => gain(b) - gain(a) || a.name.localeCompare(b.name));
+    h += list.length ? list.map(i => {
+      const best = cheapestSource(i), g = gain(i);
+      return `<div class="card">
+        <div class="item"><div class="item-main" onclick="openItem('${i.id}')"><div class="item-name">${esc(i.name)}</div>
+          <div class="meta" style="white-space:normal">${esc(i.category || '')}${+i.vat ? ' · ' + fq(i.vat) + '% VAT' : ''}${g > 0.005 ? ` · <span class="pos">save ${money(g)} per restock with ${esc(best.name)}</span>` : ''}</div></div>
+          ${g > 0.005 && me.manager ? `<button class="btn btn-ghost btn-sm" data-src="${esc(best.name)}" onclick="makePreferred('${i.id}', this.dataset.src)">Use ${esc(best.name)}</button>` : ''}</div>
+        <div style="margin-top:6px">${sourceList(i, true)}</div>
+      </div>`;
+    }).join('') : '<div class="empty">Nothing here.</div>';
+  }
+  $('order-list').innerHTML = h;
+}
+
 // ── ORDER BUILDER ──
 let draft = null;
-function orderOne(id) {
+function orderOne(id, srcName) {
   const it = Store.db.items[id]; if (!it) return;
-  newOrder(false, { [id]: suggestedQty(it, onOrderMap()[id]) || (+it.step || 1) }, it.supplier || '');
+  const src = srcName || it.supplier || '';
+  const pack = +((findSource(it, src) || {}).pack) || 1;
+  const q = suggestedQty(it, onOrderMap()[id]) || (+it.step || 1);
+  newOrder(false, { [id]: r3(Math.ceil(q / pack) * pack) }, '', src ? { [id]: src } : null);
 }
-function newOrder(fillLow, preset, sup) {
-  if (!needMgr(() => newOrder(fillLow, preset, sup))) return;
-  draft = { qty: {}, cost: {}, supplier: sup || '', q: '', expected: todayStr(1), note: '' };
+function newOrder(fillLow, preset, sup, srcPreset) {
+  if (!needMgr(() => newOrder(fillLow, preset, sup, srcPreset))) return;
+  draft = { qty: {}, cost: {}, src: {}, supplier: sup || '', q: '', expected: todayStr(1), note: '' };
   if (preset) Object.assign(draft.qty, preset);
+  if (srcPreset) Object.assign(draft.src, srcPreset);
   if (fillLow) fillSuggested(true);
   openSheet('static', `
-    <div class="sheet-head"><h2>New order<div class="sub">Pick quantities. One order is created per supplier.</div></h2><button class="x" onclick="closeSheet()">✕</button></div>
+    <div class="sheet-head"><h2>New order<div class="sub">Pick quantities and where to buy each item. One order is created per source.</div></h2><button class="x" onclick="closeSheet()">✕</button></div>
     <div class="toolbar">
       <select class="input" id="b-sup" style="flex:1 1 140px" onchange="draft.supplier=this.value;renderBuilder()"></select>
       <input class="input" type="search" style="flex:1 1 140px" placeholder="Search…" oninput="draft.q=this.value;renderBuilder()">
     </div>
-    <div class="btn-row" style="margin-top:0"><button class="btn btn-ghost btn-sm" onclick="fillSuggested();renderBuilder()">✨ Fill suggested</button><button class="btn btn-ghost btn-sm" onclick="draft.qty={};renderBuilder()">Clear</button></div>
+    <div class="btn-row" style="margin-top:0"><button class="btn btn-ghost btn-sm" onclick="fillSuggested();renderBuilder()">✨ Fill suggested</button><button class="btn btn-ghost btn-sm" onclick="useCheapest()">💷 Use cheapest</button><button class="btn btn-ghost btn-sm" onclick="draft.qty={};renderBuilder()">Clear</button></div>
     <div class="b-line dim" style="font-size:.62rem;text-transform:uppercase;letter-spacing:.08em;border:none;padding-bottom:0"><span>Item · in stock / par</span><span class="right">Qty</span><span class="right">Price</span></div>
     <div id="b-list"></div>
     <div class="form-grid" style="margin-top:12px">
@@ -1060,13 +1248,24 @@ function newOrder(fillLow, preset, sup) {
     <div class="btn-row"><button class="btn btn-primary" id="b-create" onclick="createOrders()">Create order</button></div>`);
   renderBuilder();
 }
+function lineSource(i) {
+  if (draft.src[i.id] && findSource(i, draft.src[i.id])) return draft.src[i.id];
+  if (draft.supplier && findSource(i, draft.supplier)) return draft.supplier;
+  return i.supplier || (itemSources(i)[0] || {}).name || 'No supplier';
+}
+function lineCost(i) {
+  if (draft.cost[i.id] != null) return draft.cost[i.id];
+  const src = findSource(i, lineSource(i));
+  return src && +src.price ? r3(srcUnit(src)) : (+i.cost || 0);
+}
 function fillSuggested(silent) {
   const oo = onOrderMap(); let n = 0;
   items().forEach(i => {
-    if (draft.supplier && i.supplier !== draft.supplier) return;
+    if (draft.supplier && !findSource(i, draft.supplier)) return;
     if (status(i) === 'ok') return;
     const s = suggestedQty(i, oo[i.id]);
-    if (s > 0) { draft.qty[i.id] = s; n++; }
+    const pack = +((findSource(i, lineSource(i)) || {}).pack) || 1;
+    if (s > 0) { draft.qty[i.id] = r3(Math.ceil(s / pack) * pack); n++; }
   });
   if (!silent) toast(n ? `Suggested ${n} item${n > 1 ? 's' : ''} below par` : 'Nothing below par for this supplier');
 }
@@ -1075,23 +1274,26 @@ function renderBuilder() {
   $('b-sup').innerHTML = `<option value="">All suppliers</option>` + sups.map(s => `<option ${s === draft.supplier ? 'selected' : ''}>${esc(s)}</option>`).join('');
   const oo = onOrderMap();
   const q = draft.q.trim().toLowerCase();
-  const list = items().filter(i => (!draft.supplier || i.supplier === draft.supplier) && (!q || i.name.toLowerCase().includes(q)))
+  const list = items().filter(i => (!draft.supplier || findSource(i, draft.supplier)) && (!q || i.name.toLowerCase().includes(q)))
     .sort((a, b) => ((draft.qty[b.id] > 0) - (draft.qty[a.id] > 0)) || ({ out: 0, low: 1, ok: 2 }[status(a)] - { out: 0, low: 1, ok: 2 }[status(b)]) || a.name.localeCompare(b.name));
   $('b-list').innerHTML = list.map(i => {
-    const st = status(i);
+    const st = status(i), srcs = itemSources(i), cur = lineSource(i), src = findSource(i, cur), best = cheapestSource(i);
+    const saving = best && src && best.name !== cur && +src.price ? (srcCompare(src, i) - srcCompare(best, i)) : 0;
     return `<div class="b-line ${draft.qty[i.id] > 0 ? 'sel' : ''}" id="bl-${i.id}">
       <div style="min-width:0"><div class="item-name" style="font-size:.85rem">${esc(i.name)}</div>
-        <div class="meta"><span class="${st === 'ok' ? '' : st === 'low' ? 'warn' : 'neg'}">${fq(i.qty)}</span> / ${fq(i.par)} ${esc(i.unit)}${oo[i.id] ? ` · <span style="color:var(--accent2)">+${fq(oo[i.id])} on order</span>` : ''} · ${esc(i.supplier || '–')}</div></div>
+        <div class="meta"><span class="${st === 'ok' ? '' : st === 'low' ? 'warn' : 'neg'}">${fq(i.qty)}</span> / ${fq(i.par)} ${esc(i.unit)}${oo[i.id] ? ` · <span style="color:var(--accent2)">+${fq(oo[i.id])} on order</span>` : ''}${src && +src.pack > 1 ? ` · packs of ${fq(src.pack)}` : ''}</div>
+        ${srcs.length > 1 ? `<select class="input b-src" onchange="draft.src['${i.id}']=this.value;delete draft.cost['${i.id}'];renderBuilder()">${srcs.map(x => `<option value="${esc(x.name)}" ${x.name === cur ? 'selected' : ''}>${esc(x.name)}${+x.price ? ' · ' + money(srcUnit(x)) + '/' + esc(i.unit) : ''}</option>`).join('')}</select>` : `<div class="meta">${esc(cur)}</div>`}
+        ${saving > 0.005 ? `<div class="save-hint">${esc(best.name)} is ${money(saving)}/${esc(i.unit)} cheaper</div>` : ''}</div>
       <input class="input" type="number" inputmode="decimal" step="any" min="0" placeholder="0" value="${draft.qty[i.id] > 0 ? fq(draft.qty[i.id]) : ''}" oninput="draft.qty['${i.id}']=num(this.value);this.closest('.b-line').classList.toggle('sel',num(this.value)>0);builderSummary()">
-      <input class="input" type="number" inputmode="decimal" step="any" min="0" value="${fq(draft.cost[i.id] ?? i.cost)}" oninput="draft.cost['${i.id}']=num(this.value);builderSummary()">
+      <input class="input" type="number" inputmode="decimal" step="any" min="0" value="${fq(lineCost(i))}" oninput="draft.cost['${i.id}']=num(this.value);builderSummary()">
     </div>`;
   }).join('') || '<div class="empty">No items.</div>';
   builderSummary();
 }
 function builderLines() {
   return Object.entries(draft.qty).filter(([id, q]) => q > 0 && Store.db.items[id]).map(([id, q]) => {
-    const i = Store.db.items[id];
-    return { id: 'l' + uid(), itemId: id, name: i.name, unit: i.unit || '', qty: r3(q), cost: +(draft.cost[id] ?? i.cost) || 0, supplier: i.supplier || 'No supplier' };
+    const i = Store.db.items[id], supplier = lineSource(i), src = findSource(i, supplier) || {};
+    return { id: 'l' + uid(), itemId: id, name: i.name, unit: i.unit || '', qty: r3(q), cost: +lineCost(i) || 0, pack: +src.pack || 1, code: src.code || '', supplier };
   });
 }
 function builderSummary() {
@@ -1104,6 +1306,13 @@ function builderSummary() {
   const b = $('b-create');
   b.disabled = !lines.length;
   b.textContent = sups.length > 1 ? `Create ${sups.length} orders` : 'Create order';
+}
+function useCheapest() {
+  let n = 0;
+  items().forEach(i => { const b = cheapestSource(i); if (b && lineSource(i) !== b.name) { draft.src[i.id] = b.name; delete draft.cost[i.id]; n++; } });
+  if (draft.supplier) draft.supplier = '';
+  renderBuilder();
+  toast(n ? `Switched ${n} item${n > 1 ? 's' : ''} to the cheapest source` : 'Already using the cheapest sources');
 }
 function poNumber() { const d = new Date(); return 'PO-' + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0') + '-' + Math.random().toString(36).slice(2, 5).toUpperCase(); }
 function createOrders() {
@@ -1130,7 +1339,9 @@ function renderOrderSheet(id) {
   const o = Store.db.orders[id];
   if (!o) { closeSheet(); return; }
   const st = ORDER_STATUS[o.status] || { label: o.status, cls: '' };
-  const contact = (settings().suppliers || {})[o.supplier] || {};
+  const contact = supInfo(o.supplier);
+  const site = safeUrl(contact.url);
+  const lineLink = l => { const it = Store.db.items[l.itemId]; return it ? sourceLink(findSource(it, o.supplier), it) : ''; };
   const showFound = o.status !== 'ordered' && o.status !== 'cancelled';
   $('sheet').innerHTML = `
     <div class="sheet-head"><h2>${esc(o.supplier)} <span class="dim mono" style="font-size:.8rem;font-weight:400">${esc(o.number)}</span>
@@ -1140,12 +1351,14 @@ function renderOrderSheet(id) {
     <table class="tbl"><thead><tr><th>Item</th><th class="n">Qty</th>${showFound ? '<th class="n">Got</th>' : ''}<th class="n">Price</th><th class="n">Total</th></tr></thead><tbody>
     ${(o.lines || []).map(l => {
       const got = +(o.found || {})[l.id] || 0;
-      return `<tr><td>${esc(l.name)}</td><td class="n">${fq(l.qty)} ${esc(l.unit)}</td>${showFound ? `<td class="n ${got < l.qty ? 'warn' : got > l.qty ? '' : 'pos'}">${fq(got)}</td>` : ''}<td class="n">${money(l.cost)}</td><td class="n">${money(l.qty * l.cost)}</td></tr>`;
+      const ln = lineLink(l);
+      return `<tr><td>${ln ? `<a href="${esc(ln)}" target="_blank" rel="noopener" style="color:var(--text)">${esc(l.name)} ↗</a>` : esc(l.name)}${l.code || +l.pack > 1 ? `<div class="dim" style="font-size:.68rem">${l.code ? 'code ' + esc(l.code) : ''}${l.code && +l.pack > 1 ? ' · ' : ''}${+l.pack > 1 ? fq(l.qty / l.pack) + ' packs of ' + fq(l.pack) : ''}</div>` : ''}</td><td class="n">${fq(l.qty)} ${esc(l.unit)}</td>${showFound ? `<td class="n ${got < l.qty ? 'warn' : got > l.qty ? '' : 'pos'}">${fq(got)}</td>` : ''}<td class="n">${money(l.cost)}</td><td class="n">${money(l.qty * l.cost)}</td></tr>`;
     }).join('')}
     </tbody></table>
     <div class="total-line"><span>Total</span><span class="mono">${money(orderTotal(o))}</span></div>
     ${o.status === 'received' && o.shortages && Object.keys(o.shortages).length ? `<div class="banner" style="margin-top:12px;color:var(--danger);background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.3)">Short on delivery: ${(o.lines || []).filter(l => o.shortages[l.id]).map(l => esc(l.name) + ' ×' + fq(o.shortages[l.id])).join(', ')}</div>` : ''}
     ${isOpenOrder(o) ? `<div class="btn-row"><button class="btn btn-primary" onclick="openRunner('order','${o.id}')">📦 ${o.status === 'receiving' ? 'Continue receiving' : 'Receive & cross-check'}</button></div>` : ''}
+    ${site && isOpenOrder(o) ? `<div class="btn-row"><a class="btn btn-blue" href="${esc(site)}" target="_blank" rel="noopener">Order on ${esc(o.supplier)} ↗</a></div><div class="hint dim" style="font-size:.7rem;margin-top:6px">Opens ${esc(o.supplier)}'s app or website. Copy the list first to have it ready.</div>` : ''}
     <div class="btn-row">
       <button class="btn btn-ghost" onclick="sendOrder('${o.id}','copy')">📋 Copy</button>
       ${contact.phone ? `<a class="btn btn-ghost" target="_blank" rel="noopener" href="${esc('https://wa.me/' + String(contact.phone).replace(/[^\d]/g, '') + '?text=' + encodeURIComponent(orderText(o)))}">💬 WhatsApp</a>` : ''}
@@ -1160,7 +1373,7 @@ function renderOrderSheet(id) {
 function orderText(o) {
   const s = settings();
   return `Order ${o.number} from ${s.name}\n` + (o.expected ? `Delivery: ${fmtDate(o.expected)}\n` : '') + '\n' +
-    (o.lines || []).map(l => `• ${fq(l.qty)} ${l.unit} ${l.name}`).join('\n') +
+    (o.lines || []).map(l => `• ${+l.pack > 1 ? fq(l.qty / l.pack) + ' × pack of ' + fq(l.pack) + ' ' + l.unit : fq(l.qty) + ' ' + l.unit} ${l.name}${l.code ? ' (code ' + l.code + ')' : ''}`).join('\n') +
     (o.note ? `\n\nNote: ${o.note}` : '') + `\n\nThanks,\n${o.createdBy || me.name}`;
 }
 async function sendOrder(id, via) {
@@ -1378,9 +1591,13 @@ function confirmFinish(apply) {
         if (l.left > 0) shortages[l.id] = l.left;
         if (!Store.db.items[l.itemId]) return;
         const itemFields = { lastReceived: now };
-        if (updCost && l.cost) itemFields.cost = l.cost;
+        if (updCost && l.cost) {
+          itemFields.cost = l.cost;
+          const it = Store.db.items[l.itemId];
+          if (findSource(it, doc.supplier)) itemFields.sources = itemSources(it).map(x => x.name === doc.supplier ? Object.assign({}, x, { price: r3(l.cost * (+x.pack || 1)), updatedAt: now, updatedBy: me.name }) : x);
+        }
         if (l.found > 0) moveStock(l.itemId, l.found, 'received', doc.number + ' · ' + doc.supplier, { ref: doc.id, itemFields });
-        else if (updCost && l.cost) Store.patch('items', l.itemId, { cost: l.cost });
+        else if (updCost && l.cost) Store.patch('items', l.itemId, itemFields);
       });
       Store.patch('orders', doc.id, { status: 'received', receivedAt: now, receivedBy: me.name, shortages });
       if (back && Object.keys(shortages).length) {
@@ -1464,8 +1681,9 @@ function renderMore() {
     <div class="section-t">Suppliers</div>
     <div class="card">${sups.length ? sups.map(n => {
       const c = (s.suppliers || {})[n] || {};
-      const cnt = items().filter(i => i.supplier === n).length;
-      return `<div class="row-line"><span class="grow"><b style="font-weight:600">${esc(n)}</b><div class="dim" style="font-size:.7rem">${cnt} items${c.phone ? ' · ' + esc(c.phone) : ''}${c.email ? ' · ' + esc(c.email) : ''}</div></span>${m ? `<button class="btn btn-ghost btn-sm" data-sup="${esc(n)}" onclick="editSupplier(this.dataset.sup)">Edit</button>` : ''}</div>`;
+      const cnt = items().filter(i => findSource(i, n)).length;
+      const site = safeUrl(c.url);
+      return `<div class="row-line"><span class="grow"><b style="font-weight:600">${esc(n)}</b><div class="dim" style="font-size:.7rem">${cnt} items${c.vatIncluded ? ' · prices incl. VAT' : ''}${c.phone ? ' · ' + esc(c.phone) : ''}${c.email ? ' · ' + esc(c.email) : ''}</div></span>${site ? `<a class="btn btn-ghost btn-sm" href="${esc(site)}" target="_blank" rel="noopener">Open ↗</a>` : ''}${m ? `<button class="btn btn-ghost btn-sm" data-sup="${esc(n)}" onclick="editSupplier(this.dataset.sup)">Edit</button>` : ''}</div>`;
     }).join('') : '<div class="dim" style="font-size:.8rem">Suppliers appear here once items have one.</div>'}
     ${m ? `<div class="btn-row"><button class="btn btn-ghost btn-sm" onclick="editSupplier('')">＋ Add supplier</button></div>` : ''}</div>
 
@@ -1508,15 +1726,20 @@ function editSupplier(name) {
       <div class="field full"><label>Name</label><input class="input" id="sp-name" value="${esc(name)}" ${name ? 'disabled' : ''}></div>
       <div class="field"><label>WhatsApp / phone</label><input class="input" id="sp-phone" type="tel" value="${esc(c.phone || '')}" placeholder="+44 7…"></div>
       <div class="field"><label>Email</label><input class="input" id="sp-email" type="email" value="${esc(c.email || '')}"></div>
+      <div class="field full"><label>Website or app link</label><input class="input" id="sp-url" type="url" value="${esc(c.url || '')}" placeholder="https://www.booker.co.uk"><div class="hint">On Android this opens the supplier's app if it's installed.</div></div>
+      <div class="field full"><label>Search link (optional)</label><input class="input" id="sp-search" value="${esc(c.searchUrl || '')}" placeholder="Search a product on their site, copy the link, replace the product name with {q}"><div class="hint">Lets Open jump straight to that product's search results.</div></div>
       <div class="field full"><label>Order days / notes</label><input class="input" id="sp-notes" value="${esc(c.notes || '')}" placeholder="e.g. order by 2pm for next-day delivery"></div>
     </div>
+    <label class="check-row"><input type="checkbox" id="sp-vat" ${c.vatIncluded ? 'checked' : ''}> Prices on this site include VAT (supermarkets usually do, cash &amp; carry usually don't)</label>
     <div class="btn-row"><button class="btn btn-primary" onclick="saveSupplier()">Save</button></div>`);
 }
 function saveSupplier() {
   const n = $('sp-name').value.trim(); if (!n) return;
   const s = settings();
   const suppliers = Object.assign({}, s.suppliers || {});
-  suppliers[n] = { phone: $('sp-phone').value.trim(), email: $('sp-email').value.trim(), notes: $('sp-notes').value.trim() };
+  const url = $('sp-url').value.trim(), search = $('sp-search').value.trim();
+  if ((url && !safeUrl(url)) || (search && !safeUrl(search))) { toast('Links must start with http:// or https://'); return; }
+  suppliers[n] = { phone: $('sp-phone').value.trim(), email: $('sp-email').value.trim(), notes: $('sp-notes').value.trim(), url: safeUrl(url), searchUrl: safeUrl(search), vatIncluded: $('sp-vat').checked };
   Store.put('meta', Object.assign({}, s, { id: 'settings', suppliers }));
   closeSheet(); toast('Supplier saved');
 }
@@ -1550,7 +1773,11 @@ async function wipeAll() {
 function loadSampleShared() {
   if (!needMgr(loadSampleShared)) return;
   const d = emptyDb(); loadSample(d);
-  Store.batch(() => COLS.forEach(col => Object.values(d[col]).forEach(doc => { if (col === 'meta' && Store.db.meta.settings) return; Store.put(col, doc); })));
+  Store.batch(() => COLS.forEach(col => Object.values(d[col]).forEach(doc => {
+    // Keep the restaurant's own settings, but add sample suppliers it doesn't have yet
+    if (col === 'meta' && Store.db.meta.settings) { const cur = settings(); Store.put('meta', Object.assign({}, cur, { id: 'settings', suppliers: Object.assign({}, doc.suppliers, cur.suppliers) })); return; }
+    Store.put(col, doc);
+  })));
   toast('Sample items loaded');
 }
 
@@ -1581,6 +1808,13 @@ function loadSample(db) {
     I('i16', 'Blue roll', 'Cleaning', 'pack', 6, 4, 10, 9.50, 'Booker', 'Back store', null),
     I('i17', 'Sanitiser spray 5L', 'Cleaning', 'bottle', 2, 1, 3, 11.80, 'Booker', 'Back store', null),
   ].forEach(i => { db.items[i.id] = i; });
+  const S = (name, price, pack, daysOld, code) => ({ name, price, pack, url: '', code: code || '', updatedAt: t - daysOld * DAY, updatedBy: 'Demo' });
+  Object.assign(db.items.i16, { vat: 20, sources: [S('Booker', 9.50, 1, 6, '204511'), S("Sainsbury's", 6.00, 1, 3), S('Head office', 8.00, 1, 20)] });
+  Object.assign(db.items.i01, { sources: [S('Brakes', 6.20, 1, 4, 'CH2210'), S('Booker', 13.70, 2, 9, '118230')] });
+  Object.assign(db.items.i12, { sources: [S('Booker', 32.00, 1, 5), S('Brakes', 29.80, 1, 45)] });
+  Object.assign(db.items.i13, { vat: 20, sources: [S('Booker', 13.20, 1, 2, '300114'), S("Sainsbury's", 15.00, 1, 2)] });
+  Object.assign(db.items.i17, { vat: 20, sources: [S('Booker', 11.80, 1, 8), S('Head office', 9.90, 1, 15)] });
+  Object.assign(db.items.i15, { vat: 20, sources: [S('Booker', 24.00, 1, 10, '551902'), S('Head office', 21.00, 1, 10)] });
   db.orders.o_demo = { id: 'o_demo', number: 'PO-DEMO-1', supplier: 'Booker', status: 'ordered', createdAt: t - DAY, createdBy: 'Demo', expected: todayStr(0), note: '', found: {},
     lines: [
       { id: 'l1', itemId: 'i15', name: 'Takeaway boxes (250)', unit: 'box', qty: 4, cost: 24.00 },
@@ -1593,7 +1827,12 @@ function loadSample(db) {
       db.movements['m' + n] = { id: 'm' + n, ts: t - h * 3600e3, by: 'Demo', itemId, name: it.name, unit: it.unit, delta, reason, note, cost: it.cost, ref: '' };
     });
   db.meta.settings = { id: 'settings', name: 'My Restaurant', currency: '£', pin: '1234',
-    suppliers: { Booker: { phone: '', email: '', notes: 'Order by 3pm for next-day' }, Brakes: { phone: '', email: '', notes: '' } } };
+    suppliers: {
+      Booker: { phone: '', email: '', notes: 'Order by 3pm for next-day', url: 'https://www.booker.co.uk', vatIncluded: false },
+      Brakes: { phone: '', email: '', notes: '', url: 'https://www.brake.co.uk', vatIncluded: false },
+      "Sainsbury's": { phone: '', email: '', notes: 'Collect from the local store', url: 'https://www.sainsburys.co.uk', vatIncluded: true },
+      'Head office': { phone: '', email: '', notes: 'Send the order on WhatsApp' },
+    } };
 }
 
 // ══════════════════════════════════════
