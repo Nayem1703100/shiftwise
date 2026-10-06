@@ -982,59 +982,60 @@ function sourceList(i, compact) {
 
 // ── SOURCES EDITOR ──
 let srcDraft = null;
-function editSources(id) {
-  if (!needMgr(() => editSources(id))) return;
-  const i = Store.db.items[id]; if (!i) return;
-  srcDraft = { id, list: clone(itemSources(i)), preferred: i.supplier || '' };
-  if (!srcDraft.list.length) srcDraft.list.push({ name: '', price: 0, pack: 1, url: '', code: '' });
-  renderSrcEditor();
+const blankSrc = () => ({ name: '', price: 0, pack: 1, url: '', code: '' });
+function srcUnitLabel() { const u = $('f-unit'); return (u && u.value.trim()) || 'units'; }
+function srcRowsHtml() {
+  const unit = esc(srcUnitLabel()), cur = esc(settings().currency), many = srcDraft.list.length > 1;
+  return srcDraft.list.map((x, k) => `<div class="src-edit">
+      <div class="form-grid">
+        <div class="field wide"><label>Source</label><input class="input" data-f="name" list="dl-src" value="${esc(x.name)}" placeholder="e.g. Booker, Sainsbury's, Head office"></div>
+        <div class="field"><label>Price (${cur})</label><input class="input" data-f="price" type="number" inputmode="decimal" step="any" min="0" value="${+x.price ? fq(x.price) : ''}" placeholder="0.00"></div>
+        <div class="field"><label>Per pack of (${unit})</label><input class="input" data-f="pack" type="number" inputmode="decimal" step="any" min="0.001" value="${fq(x.pack || 1)}"></div>
+        <div class="field"><label>Product code</label><input class="input" data-f="code" value="${esc(x.code || '')}"></div>
+        <div class="field full"><label>Product link (optional)</label><input class="input" data-f="url" type="url" value="${esc(x.url || '')}" placeholder="Paste the product page from their site or app"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px">
+        ${many ? `<label class="check-row" style="margin:0"><input type="radio" name="src-pref" value="${k}" ${k === srcDraft.prefIdx ? 'checked' : ''}> Preferred source</label>` : `<span class="dim" style="font-size:.72rem">Add more sources to compare prices</span>`}
+        ${many || x.name ? `<button class="btn btn-ghost btn-sm" onclick="srcRemove(${k})">Remove</button>` : ''}
+      </div></div>`).join('') +
+    `<datalist id="dl-src">${supplierList().map(v => `<option value="${esc(v)}">`).join('')}</datalist>
+    <button class="btn btn-ghost btn-full" onclick="srcAdd()">＋ Add another source</button>`;
+}
+function renderSrcRows() { $('src-rows').innerHTML = srcRowsHtml(); }
+function srcAdd() {
+  collectSrc(); srcDraft.list.push(blankSrc()); renderSrcRows();
+  const rows = document.querySelectorAll('#src-rows .src-edit');
+  rows[rows.length - 1].querySelector('[data-f="name"]').focus();
+}
+function srcRemove(k) {
+  collectSrc(); srcDraft.list.splice(k, 1);
+  if (srcDraft.prefIdx >= k && srcDraft.prefIdx > 0) srcDraft.prefIdx--;
+  if (!srcDraft.list.length) srcDraft.list.push(blankSrc());
+  renderSrcRows();
 }
 function collectSrc() {
-  document.querySelectorAll('.src-edit').forEach((row, k) => {
+  document.querySelectorAll('#src-rows .src-edit').forEach((row, k) => {
     const g = f => row.querySelector('[data-f="' + f + '"]').value.trim();
     Object.assign(srcDraft.list[k], { name: g('name'), price: num(g('price')), pack: num(g('pack'), 1) || 1, url: g('url'), code: g('code') });
   });
-  const pref = document.querySelector('input[name="src-pref"]:checked');
-  if (pref) srcDraft.preferred = srcDraft.list[+pref.value].name;
+  const pref = document.querySelector('#src-rows input[name="src-pref"]:checked');
+  srcDraft.prefIdx = pref ? +pref.value : Math.min(srcDraft.prefIdx || 0, srcDraft.list.length - 1);
 }
-function renderSrcEditor() {
-  const i = Store.db.items[srcDraft.id]; if (!i) return;
-  openSheet('static', `
-    <div class="sheet-head"><h2>Sources · ${esc(i.name)}<div class="sub">Where you can buy it. Price is per pack; pack size is in ${esc(i.unit || 'units')}.</div></h2><button class="x" onclick="openItem('${i.id}')">✕</button></div>
-    ${srcDraft.list.map((x, k) => `<div class="src-edit">
-      <div class="form-grid">
-        <div class="field wide"><label>Source</label><input class="input" data-f="name" list="dl-src" value="${esc(x.name)}" placeholder="e.g. Booker, Head office"></div>
-        <div class="field"><label>Pack price (${esc(settings().currency)})</label><input class="input" data-f="price" type="number" inputmode="decimal" step="any" min="0" value="${+x.price ? fq(x.price) : ''}"></div>
-        <div class="field"><label>Pack size (${esc(i.unit || 'units')})</label><input class="input" data-f="pack" type="number" inputmode="decimal" step="any" min="0.001" value="${fq(x.pack || 1)}"></div>
-        <div class="field"><label>Product code</label><input class="input" data-f="code" value="${esc(x.code || '')}"></div>
-        <div class="field full"><label>Product link (optional)</label><input class="input" data-f="url" type="url" value="${esc(x.url || '')}" placeholder="Paste the product page from the supplier's site or app"></div>
-      </div>
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
-        <label class="check-row" style="margin:0"><input type="radio" name="src-pref" value="${k}" ${x.name && x.name === srcDraft.preferred ? 'checked' : ''}> Preferred source</label>
-        <button class="btn btn-ghost btn-sm" onclick="collectSrc();srcDraft.list.splice(${k},1);renderSrcEditor()">Remove</button>
-      </div></div>`).join('')}
-    <datalist id="dl-src">${supplierList().map(v => `<option value="${esc(v)}">`).join('')}</datalist>
-    <button class="btn btn-ghost btn-full" onclick="collectSrc();srcDraft.list.push({name:'',price:0,pack:1,url:'',code:''});renderSrcEditor()">＋ Add source</button>
-    <div class="hint dim" style="font-size:.7rem;margin-top:8px">Without a product link, Open goes to the supplier's website (set it under More → Suppliers).</div>
-    <div class="btn-row"><button class="btn btn-ghost" onclick="openItem('${i.id}')">Cancel</button><button class="btn btn-primary" onclick="saveSources()">Save sources</button></div>`);
-}
-function saveSources() {
-  collectSrc();
-  const i = Store.db.items[srcDraft.id]; if (!i) return;
-  const old = itemSources(i), now = Date.now();
-  const seen = new Set();
-  const list = srcDraft.list.filter(x => x.name && !seen.has(x.name) && seen.add(x.name)).map(x => {
+// Tidy the drafted sources. Returns null (after telling the user) if a link is unusable.
+function cleanSources(old) {
+  if (srcDraft.list.some(x => x.url && !safeUrl(x.url))) { toast('Links must start with http:// or https://'); return null; }
+  const now = Date.now(), seen = new Set();
+  const prefName = (srcDraft.list[srcDraft.prefIdx] || {}).name || '';
+  const list = srcDraft.list.filter(x => x.name && !seen.has(x.name.toLowerCase()) && seen.add(x.name.toLowerCase())).map(x => {
     const prev = old.find(o => o.name === x.name);
     const changed = !prev || +prev.price !== +x.price || +(prev.pack || 1) !== +x.pack;
     return { name: x.name, price: r3(x.price), pack: r3(x.pack) || 1, url: safeUrl(x.url), code: x.code || '', updatedAt: changed ? now : (prev.updatedAt || now), updatedBy: changed ? me.name : (prev.updatedBy || me.name) };
   });
-  const bad = srcDraft.list.find(x => x.url && !safeUrl(x.url));
-  if (bad) { toast('Links must start with http:// or https://'); return; }
-  const preferred = list.find(x => x.name === srcDraft.preferred) ? srcDraft.preferred : (list[0] ? list[0].name : '');
-  Store.patch('items', i.id, { sources: list, supplier: preferred, updatedAt: now, updatedBy: me.name });
-  toast('Sources saved');
-  openItem(i.id);
+  const preferred = list.find(x => x.name === prefName) ? prefName : (list[0] ? list[0].name : '');
+  return { list, preferred };
 }
+// "✏️ Sources" on the item sheet opens the item form at its sources
+function editSources(id) { editItem(id, true); }
 function makePreferred(id, name) {
   if (!needMgr(() => makePreferred(id, name))) return;
   const i = Store.db.items[id]; if (!i) return;
@@ -1071,50 +1072,87 @@ async function applyAdjust(id) {
 }
 
 // ── ITEM EDIT ──
-function editItem(id) {
-  if (!needMgr(() => editItem(id))) return;
-  const i = id ? Store.db.items[id] : { name: '', category: '', unit: 'pcs', qty: 0, par: 0, target: 0, cost: 0, supplier: '', location: '', expiry: '', sku: '', notes: '', step: 1 };
+function editItem(id, toSources) {
+  if (!needMgr(() => editItem(id, toSources))) return;
+  const i = id ? Store.db.items[id] : { name: '', category: '', unit: 'pcs', qty: 0, par: 0, target: 0, cost: 0, supplier: '', location: '', expiry: '', sku: '', notes: '', step: 1, vat: 0 };
+  if (!i) return;
+  const list = clone(itemSources(i));
+  srcDraft = { list: list.length ? list : [blankSrc()], prefIdx: Math.max(0, list.findIndex(x => x.name === i.supplier)) };
   const dl = (name, vals) => `<datalist id="${name}">${vals.map(v => `<option value="${esc(v)}">`).join('')}</datalist>`;
   openSheet('static', `
-    <div class="sheet-head"><h2>${id ? 'Edit item' : 'New stock item'}</h2><button class="x" onclick="closeSheet()">✕</button></div>
+    <div class="sheet-head"><h2>${id ? 'Edit ' + esc(i.name) : 'New stock item'}<div class="sub">One item, every place you buy it.</div></h2><button class="x" onclick="${id ? `openItem('${id}')` : 'closeSheet()'}">✕</button></div>
     <div class="form-grid">
-      <div class="field full"><label>Name</label><input class="input" id="f-name" value="${esc(i.name)}" placeholder="e.g. Chicken breast"></div>
-      <div class="field"><label>Category</label><input class="input" id="f-category" list="dl-cat" value="${esc(i.category)}" placeholder="e.g. Meat & fish"></div>
-      <div class="field"><label>Unit</label><input class="input" id="f-unit" list="dl-unit" value="${esc(i.unit)}"></div>
+      <div class="field full"><label>Name</label><input class="input" id="f-name" value="${esc(i.name)}" placeholder="e.g. Blue roll"></div>
+      <div class="field"><label>Category</label><input class="input" id="f-category" list="dl-cat" value="${esc(i.category)}" placeholder="e.g. Cleaning"></div>
+      <div class="field"><label>Unit you count in</label><input class="input" id="f-unit" list="dl-unit" value="${esc(i.unit)}" onchange="collectSrc();renderSrcRows()"></div>
       ${id ? '' : `<div class="field"><label>Quantity now</label><input class="input" id="f-qty" type="number" inputmode="decimal" step="any" value="${fq(i.qty)}"></div>`}
-      <div class="field"><label>Unit price (${esc(settings().currency)})</label><input class="input" id="f-cost" type="number" inputmode="decimal" step="any" value="${fq(i.cost)}"></div>
+      <div class="field"><label>VAT rate</label><select class="input" id="f-vat">${[0, 5, 20].map(v => `<option value="${v}" ${+(i.vat || 0) === v ? 'selected' : ''}>${v}%${v === 0 ? ' (most food)' : v === 20 ? ' (cleaning, soft drinks)' : ''}</option>`).join('')}</select></div>
+    </div>
+
+    <div class="section-t" id="src-head">Where to buy · price per source</div>
+    <div id="src-rows"></div>
+
+    <div class="section-t">Stock levels &amp; storage</div>
+    <div class="form-grid">
       <div class="field"><label>Par level</label><input class="input" id="f-par" type="number" inputmode="decimal" step="any" value="${fq(i.par)}"><div class="hint">Flag as low at or below this</div></div>
       <div class="field"><label>Order up to</label><input class="input" id="f-target" type="number" inputmode="decimal" step="any" value="${fq(i.target)}"><div class="hint">Suggested orders fill to this</div></div>
-      <div class="field"><label>Supplier</label><input class="input" id="f-supplier" list="dl-sup" value="${esc(i.supplier)}"></div>
-      <div class="field"><label>Storage location</label><input class="input" id="f-location" list="dl-loc" value="${esc(i.location)}" placeholder="e.g. Walk-in fridge"></div>
+      <div class="field"><label>Storage location</label><input class="input" id="f-location" list="dl-loc" value="${esc(i.location)}" placeholder="e.g. Back store"></div>
       <div class="field"><label>Expiry date</label><input class="input" id="f-expiry" type="date" value="${esc(i.expiry)}"></div>
       <div class="field"><label>± button step</label><input class="input" id="f-step" type="number" inputmode="decimal" step="any" min="0.001" value="${fq(i.step || 1)}"></div>
       <div class="field"><label>SKU / code</label><input class="input" id="f-sku" value="${esc(i.sku)}"></div>
-      <div class="field"><label>VAT rate</label><select class="input" id="f-vat">${[0, 5, 20].map(v => `<option value="${v}" ${+(i.vat || 0) === v ? 'selected' : ''}>${v}%${v === 0 ? ' (most food)' : v === 20 ? ' (cleaning, soft drinks)' : ''}</option>`).join('')}</select><div class="hint">Used to compare suppliers fairly</div></div>
+      ${id ? `<div class="field full"><label>Last paid price per ${esc(i.unit || 'unit')} (${esc(settings().currency)})</label><input class="input" id="f-cost" type="number" inputmode="decimal" step="any" value="${fq(i.cost)}"><div class="hint">Values the stock on hand. Updates itself when a delivery is received.</div></div>` : ''}
       <div class="field full"><label>Notes</label><input class="input" id="f-notes" value="${esc(i.notes)}" placeholder="Storage, brand, allergens…"></div>
     </div>
-    ${dl('dl-cat', distinct('category'))}${dl('dl-unit', UNITS)}${dl('dl-sup', supplierList())}${dl('dl-loc', distinct('location'))}
+    ${dl('dl-cat', distinct('category'))}${dl('dl-unit', UNITS)}${dl('dl-loc', distinct('location'))}
     <div class="btn-row">${id ? `<button class="btn btn-ghost" onclick="openItem('${id}')">Cancel</button>` : ''}<button class="btn btn-primary" onclick="saveItem('${id || ''}')">${id ? 'Save changes' : 'Add item'}</button></div>`);
-  if (!id) setTimeout(() => $('f-name').focus(), 50);
+  renderSrcRows();
+  if (toSources) setTimeout(() => $('src-head').scrollIntoView({ block: 'start' }), 50);
+  else if (!id) setTimeout(() => $('f-name').focus(), 50);
 }
-function saveItem(id) {
-  const g = k => $('f-' + k).value.trim();
+const sameName = (a, b) => a.trim().toLowerCase().replace(/\s+/g, ' ') === b.trim().toLowerCase().replace(/\s+/g, ' ');
+async function saveItem(id) {
+  const g = k => $('f-' + k) ? $('f-' + k).value.trim() : '';
   const name = g('name');
   if (!name) { $('f-name').focus(); return; }
+  collectSrc();
+  const cur = id ? Store.db.items[id] : null;
+  const src = cleanSources(cur ? itemSources(cur) : []);
+  if (!src) return;
+  const pref = src.list.find(x => x.name === src.preferred);
+  const prefUnit = pref && +pref.price ? r3(srcUnit(pref)) : 0;
   const fields = {
-    name, category: g('category'), unit: g('unit') || 'pcs', cost: num(g('cost')), par: num(g('par')), target: num(g('target')),
-    supplier: g('supplier'), location: g('location'), expiry: g('expiry'), sku: g('sku'), notes: g('notes'), step: num(g('step'), 1) || 1, vat: num(g('vat')),
+    name, category: g('category'), unit: g('unit') || 'pcs', par: num(g('par')), target: num(g('target')),
+    location: g('location'), expiry: g('expiry'), sku: g('sku'), notes: g('notes'), step: num(g('step'), 1) || 1, vat: num(g('vat')),
+    sources: src.list, supplier: src.preferred,
+    cost: id ? (num(g('cost')) || prefUnit) : prefUnit,
     updatedAt: Date.now(), updatedBy: me.name,
   };
-  if (id) {
-    // A new preferred supplier typed here becomes one of the item's sources
-    const cur = Store.db.items[id];
-    if (cur && Array.isArray(cur.sources) && cur.sources.length && fields.supplier && !cur.sources.some(x => x.name === fields.supplier))
-      fields.sources = cur.sources.concat([{ name: fields.supplier, price: fields.cost, pack: 1, url: '', code: '', updatedAt: Date.now(), updatedBy: me.name }]);
-    Store.patch('items', id, fields); toast('Saved'); openItem(id); return;
+  if (id) { Store.patch('items', id, fields); toast('Saved'); openItem(id); return; }
+
+  const qty = num(g('qty'));
+  // Same item under the same name? Offer to add these sources to it instead of a duplicate
+  const existing = items().find(x => sameName(x.name, name));
+  if (existing) {
+    const choice = await dialog({
+      title: existing.name + ' already exists',
+      body: `It has ${itemSources(existing).length || 'no'} source${itemSources(existing).length === 1 ? '' : 's'} already. Add ${src.list.length ? 'these sources' : 'this'}${qty ? ' and the quantity' : ''} to it instead of making a second item?`,
+      ok: 'Add to existing', cancelLabel: 'Back',
+      extra: `<button class="btn btn-ghost" onclick="dlgDone('new')">Create new anyway</button>`,
+    });
+    if (choice === null) return;
+    if (choice === true) {
+      const merged = itemSources(existing).map(o => src.list.find(n => n.name === o.name) || o)
+        .concat(src.list.filter(n => !itemSources(existing).some(o => o.name === n.name)));
+      Store.batch(() => {
+        Store.patch('items', existing.id, { sources: merged, supplier: existing.supplier || src.preferred, updatedAt: Date.now(), updatedBy: me.name });
+        if (qty) moveStock(existing.id, qty, 'adjust', 'Added from new item form');
+      });
+      toast('Added to ' + existing.name);
+      openItem(existing.id);
+      return;
+    }
   }
   const nid = 'i' + uid();
-  const qty = num(g('qty'));
   Store.batch(() => {
     Store.put('items', Object.assign({ id: nid, qty: 0, createdAt: Date.now(), lastReceived: null, lastCounted: null }, fields));
     if (qty) moveStock(nid, qty, 'adjust', 'Opening stock');
