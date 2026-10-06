@@ -22,6 +22,15 @@ Open either file in a browser, or host the folder on any static host such as Git
 
 Staff can count, use and receive stock. Manager mode (PIN, default `1234`, change it under More) is needed to add or edit items, create or cancel orders and change settings. The PIN only prevents accidental edits. It is not security.
 
+### Website
+
+The repo is published with GitHub Pages, from the branch chosen under **Settings → Pages**:
+
+- StockWise: `https://nayem1703100.github.io/shiftwise/stock.html`
+- ShiftWise: `https://nayem1703100.github.io/shiftwise/`
+
+On a phone, open the stock page in Chrome and tap **⋮ → Install app** (on iPhone, Safari → Share → **Add to Home Screen**). It opens full screen with its own icon. After the first visit, the pages keep working with no signal. Updates arrive automatically the next time the phone is online.
+
 ### Android app (APK)
 
 Every push runs the **Android APK** workflow in GitHub Actions (`.github/workflows/android-apk.yml`). To install it:
